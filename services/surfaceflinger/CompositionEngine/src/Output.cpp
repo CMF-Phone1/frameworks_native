@@ -994,6 +994,7 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
 
 compositionengine::OutputLayer* Output::findLayerRequestingBackgroundComposition() const {
     compositionengine::OutputLayer* layerRequestingBgComposition = nullptr;
+
     for (size_t i = 0; i < getOutputLayerCount(); i++) {
         compositionengine::OutputLayer* layer = getOutputLayerOrderedByZByIndex(i);
         compositionengine::OutputLayer* nextLayer = getOutputLayerOrderedByZByIndex(i + 1);
@@ -1562,6 +1563,19 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
 
         const Region clip(viewportRegion.intersect(layerState.visibleRegion));
         ALOGV("Layer: %s", layerFE.getDebugName());
+#ifdef MTK_IN_DISPLAY_FINGERPRINT
+#define DITHER_LAYER_NAME "Dim Layer for UDFPS"
+    if (!layerFE.mDither.checked){
+        layerFE.mDither.enabled = false;
+        ALOGV("Dither is off");
+        std::string layerName = layerFE.getDebugName();
+        if (layerName.find(DITHER_LAYER_NAME) != std::string::npos) {
+            layerFE.mDither.enabled = true;
+            ALOGV("Dither is on");
+        }
+        layerFE.mDither.checked = true;
+    }
+#endif
         if (clip.isEmpty()) {
             ALOGV("  Skipping for empty clip");
             firstLayer = false;

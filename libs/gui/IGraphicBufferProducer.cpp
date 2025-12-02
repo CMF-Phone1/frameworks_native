@@ -104,7 +104,7 @@ public:
         }
         bool nonNull = reply.readInt32();
         if (nonNull) {
-            *buf = new GraphicBuffer();
+            *buf = sp<GraphicBuffer>::make();
             result = reply.read(**buf);
             if(result != NO_ERROR) {
                 (*buf).clear();
@@ -197,7 +197,7 @@ public:
         }
 
         *buf = reply.readInt32();
-        *fence = new Fence();
+        *fence = sp<Fence>::make();
         result = reply.read(**fence);
         if (result != NO_ERROR) {
             fence->clear();
@@ -293,7 +293,7 @@ public:
         if (result == NO_ERROR) {
             bool nonNull = reply.readInt32();
             if (nonNull) {
-                *outBuffer = new GraphicBuffer;
+                *outBuffer = sp<GraphicBuffer>::make();
                 result = reply.read(**outBuffer);
                 if (result != NO_ERROR) {
                     outBuffer->clear();
@@ -302,7 +302,7 @@ public:
             }
             nonNull = reply.readInt32();
             if (nonNull) {
-                *outFence = new Fence;
+                *outFence = sp<Fence>::make();
                 result = reply.read(**outFence);
                 if (result != NO_ERROR) {
                     outBuffer->clear();
@@ -640,7 +640,7 @@ public:
         bool hasBuffer = reply.readBool();
         sp<GraphicBuffer> buffer;
         if (hasBuffer) {
-            buffer = new GraphicBuffer();
+            buffer = sp<GraphicBuffer>::make();
             result = reply.read(*buffer);
             if (result == NO_ERROR) {
                 result = reply.read(outTransformMatrix, sizeof(float) * 16);
@@ -650,7 +650,7 @@ public:
             ALOGE("getLastQueuedBuffer failed to read buffer: %d", result);
             return result;
         }
-        sp<Fence> fence(new Fence);
+        sp<Fence> fence = sp<Fence>::make();
         result = reply.read(*fence);
         if (result != NO_ERROR) {
             ALOGE("getLastQueuedBuffer failed to read fence: %d", result);
@@ -687,7 +687,7 @@ public:
         }
         sp<GraphicBuffer> buffer;
         if (hasBuffer) {
-            buffer = new GraphicBuffer();
+            buffer = sp<GraphicBuffer>::make();
             result = reply.read(*buffer);
             if (result == NO_ERROR) {
                 result = reply.read(*outRect);
@@ -700,7 +700,7 @@ public:
             ALOGE("getLastQueuedBuffer failed to read buffer: %d", result);
             return result;
         }
-        sp<Fence> fence(new Fence);
+        sp<Fence> fence = sp<Fence>::make();
         result = reply.read(*fence);
         if (result != NO_ERROR) {
             ALOGE("getLastQueuedBuffer failed to read fence: %d", result);
@@ -779,7 +779,7 @@ public:
         }
         return result;
     }
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_SETFRAMERATE)
+
     virtual status_t setFrameRate(float frameRate, int8_t compatibility,
                                   int8_t changeFrameRateStrategy) override {
         Parcel data, reply;
@@ -793,7 +793,7 @@ public:
         }
         return result;
     }
-#endif
+
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_EXTENDEDALLOCATE)
     virtual status_t setAdditionalOptions(const std::vector<gui::AdditionalOptions>& options) {
         Parcel data, reply;
@@ -957,6 +957,8 @@ public:
         return mBase->setDequeueTimeout(timeout);
     }
 
+    status_t extendSlotCount(int size) override { return mBase->extendSlotCount(size); }
+
     status_t setLegacyBufferDrop(bool drop) override {
         return mBase->setLegacyBufferDrop(drop);
     }
@@ -1016,13 +1018,11 @@ status_t IGraphicBufferProducer::setAutoPrerotation(bool autoPrerotation) {
     return INVALID_OPERATION;
 }
 
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_SETFRAMERATE)
 status_t IGraphicBufferProducer::setFrameRate(float /*frameRate*/, int8_t /*compatibility*/,
                                               int8_t /*changeFrameRateStrategy*/) {
     // No-op for IGBP other than BufferQueue.
     return INVALID_OPERATION;
 }
-#endif
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_EXTENDEDALLOCATE)
 status_t IGraphicBufferProducer::setAdditionalOptions(const std::vector<gui::AdditionalOptions>&) {
@@ -1232,7 +1232,7 @@ status_t BnGraphicBufferProducer::onTransact(
         }
         case ATTACH_BUFFER: {
             CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
-            sp<GraphicBuffer> buffer = new GraphicBuffer();
+            sp<GraphicBuffer> buffer = sp<GraphicBuffer>::make();
             status_t result = data.read(*buffer.get());
             int slot = 0;
             if (result == NO_ERROR) {
@@ -1250,7 +1250,7 @@ status_t BnGraphicBufferProducer::onTransact(
                 return result;
             }
             for (sp<GraphicBuffer>& buffer : buffers) {
-                buffer = new GraphicBuffer();
+                buffer = sp<GraphicBuffer>::make();
                 result = data.read(*buffer.get());
                 if (result != NO_ERROR) {
                     return result;
@@ -1306,7 +1306,7 @@ status_t BnGraphicBufferProducer::onTransact(
         case CANCEL_BUFFER: {
             CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
             int buf = data.readInt32();
-            sp<Fence> fence = new Fence();
+            sp<Fence> fence = sp<Fence>::make();
             status_t result = data.read(*fence.get());
             if (result == NO_ERROR) {
                 result = cancelBuffer(buf, fence);
@@ -1572,7 +1572,6 @@ status_t BnGraphicBufferProducer::onTransact(
             reply->writeInt32(result);
             return NO_ERROR;
         }
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_SETFRAMERATE)
         case SET_FRAME_RATE: {
             CHECK_INTERFACE(IGraphicBuffer, data, reply);
             float frameRate = data.readFloat();
@@ -1582,7 +1581,6 @@ status_t BnGraphicBufferProducer::onTransact(
             reply->writeInt32(result);
             return NO_ERROR;
         }
-#endif
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_EXTENDEDALLOCATE)
         case SET_ADDITIONAL_OPTIONS: {
             CHECK_INTERFACE(IGraphicBuffer, data, reply);

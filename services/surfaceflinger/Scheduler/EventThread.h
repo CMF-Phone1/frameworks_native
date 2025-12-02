@@ -25,6 +25,7 @@
 #include <utils/Errors.h>
 
 #include <scheduler/FrameRateMode.h>
+#include <scheduler/VsyncConfig.h>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -46,9 +47,9 @@ class EventThread;
 class EventThreadTest;
 class SurfaceFlinger;
 
-namespace frametimeline {
+namespace scheduler {
 class TokenManager;
-} // namespace frametimeline
+} // namespace scheduler
 
 using gui::ParcelableVsyncEventData;
 using gui::VsyncEventData;
@@ -56,7 +57,6 @@ using gui::VsyncEventData;
 // ---------------------------------------------------------------------------
 
 using FrameRateOverride = DisplayEventReceiver::Event::FrameRateOverride;
-using BufferStuffingMap = ftl::SmallMap<uid_t, uint32_t, 10>;
 
 enum class VSyncRequest {
     None = -2,
@@ -114,15 +114,16 @@ public:
 
     virtual void onHotplugConnectionError(int32_t connectionError) = 0;
 
-    // called when SF changes the active mode and apps needs to be notified about the change
-    virtual void onModeChanged(const scheduler::FrameRateMode&) = 0;
+    // Called when apps need to be notified about the change in the active mode and
+    // frame rate overrides.
+    virtual void onModeAndFrameRateOverridesChanged(PhysicalDisplayId,
+                                                    const scheduler::FrameRateMode&,
+                                                    std::vector<FrameRateOverride>,
+                                                    std::vector<float> supportedRefreshRates,
+                                                    scheduler::VsyncConfigSet) = 0;
 
     // called when SF rejects the mode change request
     virtual void onModeRejected(PhysicalDisplayId displayId, DisplayModeId modeId) = 0;
-
-    // called when SF updates the Frame Rate Override list
-    virtual void onFrameRateOverridesChanged(PhysicalDisplayId displayId,
-                                             std::vector<FrameRateOverride> overrides) = 0;
 
     virtual void dump(std::string& result) const = 0;
 
@@ -141,10 +142,6 @@ public:
 
     virtual void onHdcpLevelsChanged(PhysicalDisplayId displayId, int32_t connectedLevel,
                                      int32_t maxLevel) = 0;
-
-    // An elevated number of queued buffers in the server is detected. This propagates a
-    // flag to Choreographer indicating that buffer stuffing recovery should begin.
-    virtual void addBufferStuffedUids(BufferStuffingMap bufferStuffedUids);
 };
 
 struct IEventThreadCallback {
@@ -152,7 +149,13 @@ struct IEventThreadCallback {
 
     virtual bool throttleVsync(TimePoint, uid_t) = 0;
     virtual Period getVsyncPeriod(uid_t) = 0;
-    virtual void resync() = 0;
+
+    enum class ResyncCaller {
+        RequestNextVsync,
+        Transaction,
+    };
+    virtual void resync(ResyncCaller) = 0;
+
     virtual void onExpectedPresentTimePosted(TimePoint) = 0;
 };
 
@@ -161,7 +164,7 @@ namespace impl {
 class EventThread : public android::EventThread {
 public:
     EventThread(const char* name, std::shared_ptr<scheduler::VsyncSchedule>,
-                frametimeline::TokenManager*, IEventThreadCallback& callback,
+                scheduler::TokenManager*, IEventThreadCallback& callback,
                 std::chrono::nanoseconds workDuration, std::chrono::nanoseconds readyDuration);
     ~EventThread();
 
@@ -182,12 +185,12 @@ public:
 
     void onHotplugConnectionError(int32_t connectionError) override;
 
-    void onModeChanged(const scheduler::FrameRateMode&) override;
+    void onModeAndFrameRateOverridesChanged(PhysicalDisplayId, const scheduler::FrameRateMode&,
+                                            std::vector<FrameRateOverride>,
+                                            std::vector<float> supportedRefreshRates,
+                                            scheduler::VsyncConfigSet) override;
 
     void onModeRejected(PhysicalDisplayId displayId, DisplayModeId modeId) override;
-
-    void onFrameRateOverridesChanged(PhysicalDisplayId displayId,
-                                     std::vector<FrameRateOverride> overrides) override;
 
     void dump(std::string& result) const override;
 
@@ -198,8 +201,6 @@ public:
 
     void onHdcpLevelsChanged(PhysicalDisplayId displayId, int32_t connectedLevel,
                              int32_t maxLevel) override;
-
-    void addBufferStuffedUids(BufferStuffingMap bufferStuffedUids) override;
 
 private:
     friend EventThreadTest;
@@ -232,6 +233,7 @@ private:
             std::shared_ptr<scheduler::VsyncSchedule>) EXCLUDES(mMutex);
 
     const char* const mThreadName;
+    std::string mEventThreadStateName;
     TracedOrdinal<int> mVsyncTracer;
     TracedOrdinal<std::chrono::nanoseconds> mWorkDuration GUARDED_BY(mMutex);
     std::chrono::nanoseconds mReadyDuration GUARDED_BY(mMutex);
@@ -239,11 +241,7 @@ private:
     TimePoint mLastVsyncCallbackTime GUARDED_BY(mMutex) = TimePoint::now();
     TimePoint mLastCommittedVsyncTime GUARDED_BY(mMutex) = TimePoint::now();
     scheduler::VSyncCallbackRegistration mVsyncRegistration GUARDED_BY(mMutex);
-    frametimeline::TokenManager* const mTokenManager;
-
-    // All consumers that need to recover from buffer stuffing and the number
-    // of their queued buffers.
-    BufferStuffingMap mBufferStuffedUids GUARDED_BY(mMutex);
+    scheduler::TokenManager* const mTokenManager;
 
     IEventThreadCallback& mCallback;
 
@@ -279,6 +277,8 @@ private:
     };
 
     State mState GUARDED_BY(mMutex) = State::Idle;
+
+    void updateState(State state) REQUIRES(mMutex);
 
     static const char* toCString(State);
 };

@@ -22,25 +22,27 @@
 #include <ui/Rect.h>
 #include <unordered_map>
 
-#include "RenderArea.h"
-
 namespace android {
 
 struct ScreenCaptureOutputArgs {
     const compositionengine::CompositionEngine& compositionEngine;
     const compositionengine::Output::ColorProfile& colorProfile;
-    const RenderArea& renderArea;
     ui::LayerStack layerStack;
+    Rect sourceCrop;
     std::shared_ptr<renderengine::ExternalTexture> buffer;
+    ftl::Optional<DisplayIdVariant> displayIdVariant;
+    ui::Size reqBufferSize;
     float sdrWhitePointNits;
     float displayBrightnessNits;
     // Counterintuitively, when targetBrightness > 1.0 then dim the scene.
     float targetBrightness;
-    bool regionSampling;
+    float layerAlpha;
+    bool disableBlur;
     bool treat170mAsSrgb;
     bool dimInGammaSpaceForEnhancedScreenshots;
-    bool isProtected = false;
+    bool isSecure = false;
     bool enableLocalTonemapping = false;
+    std::string debugName;
 };
 
 // ScreenCaptureOutput is used to compose a set of layers into a preallocated buffer.
@@ -49,10 +51,10 @@ struct ScreenCaptureOutputArgs {
 // SurfaceFlinger::captureLayers and SurfaceFlinger::captureDisplay.
 class ScreenCaptureOutput : public compositionengine::impl::Output {
 public:
-    ScreenCaptureOutput(const RenderArea& renderArea,
+    ScreenCaptureOutput(const Rect sourceCrop, ftl::Optional<DisplayIdVariant> displayIdVariant,
                         const compositionengine::Output::ColorProfile& colorProfile,
-                        bool regionSampling, bool dimInGammaSpaceForEnhancedScreenshots,
-                        bool enableLocalTonemapping);
+                        float layerAlpha, bool disableBlur,
+                        bool dimInGammaSpaceForEnhancedScreenshots, bool enableLocalTonemapping);
 
     void updateColorProfile(const compositionengine::CompositionRefreshArgs&) override;
 
@@ -67,9 +69,11 @@ protected:
 
 private:
     std::unordered_map<int32_t, aidl::android::hardware::graphics::composer3::Luts> generateLuts();
-    const RenderArea& mRenderArea;
+    const Rect mSourceCrop;
+    const ftl::Optional<DisplayIdVariant> mDisplayIdVariant;
     const compositionengine::Output::ColorProfile& mColorProfile;
-    const bool mRegionSampling;
+    const float mLayerAlpha;
+    const bool mDisableBlur;
     const bool mDimInGammaSpaceForEnhancedScreenshots;
     const bool mEnableLocalTonemapping;
 };

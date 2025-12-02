@@ -39,45 +39,33 @@ std::string getTestBinarypbPath(const std::string &filename) {
     return path;
 }
 
-class FeatureOverrideParserMock : public FeatureOverrideParser {
-public:
-    MOCK_METHOD(std::string, getFeatureOverrideFilePath, (), (const, override));
-};
-
 class FeatureOverrideParserTest : public testing::Test {
 public:
+    const std::string kFilename = "gpuservice_unittest_feature_config_vk.binarypb";
+
     FeatureOverrideParserTest() {
         const ::testing::TestInfo *const test_info =
                 ::testing::UnitTest::GetInstance()->current_test_info();
         ALOGD("**** Setting up for %s.%s\n", test_info->test_case_name(), test_info->name());
     }
 
-    ~FeatureOverrideParserTest() {
+    ~FeatureOverrideParserTest() override {
         const ::testing::TestInfo *const test_info =
                 ::testing::UnitTest::GetInstance()->current_test_info();
         ALOGD("**** Tearing down after %s.%s\n", test_info->test_case_name(),
               test_info->name());
     }
-
-    void SetUp() override {
-        const std::string filename = "gpuservice_unittest_feature_config_vk.binarypb";
-
-        EXPECT_CALL(mFeatureOverrideParser, getFeatureOverrideFilePath())
-            .WillRepeatedly(Return(getTestBinarypbPath(filename)));
-    }
-
-    FeatureOverrideParserMock mFeatureOverrideParser;
 };
 
-testing::AssertionResult validateFeatureConfigTestTxtpbSizes(FeatureOverrides overrides) {
-    size_t expectedGlobalFeaturesSize = 1;
+testing::AssertionResult validateFeatureConfigTestTxtpbSizes(const FeatureOverrides &overrides) {
+    size_t expectedGlobalFeaturesSize = 3;
     if (overrides.mGlobalFeatures.size() != expectedGlobalFeaturesSize) {
         return testing::AssertionFailure()
                 << "overrides.mGlobalFeatures.size(): " << overrides.mGlobalFeatures.size()
                 << ", expected: " << expectedGlobalFeaturesSize;
     }
 
-    size_t expectedPackageFeaturesSize = 1;
+    size_t expectedPackageFeaturesSize = 3;
     if (overrides.mPackageFeatures.size() != expectedPackageFeaturesSize) {
         return testing::AssertionFailure()
                 << "overrides.mPackageFeatures.size(): " << overrides.mPackageFeatures.size()
@@ -87,25 +75,7 @@ testing::AssertionResult validateFeatureConfigTestTxtpbSizes(FeatureOverrides ov
     return testing::AssertionSuccess();
 }
 
-testing::AssertionResult validateFeatureConfigTestForceReadTxtpbSizes(FeatureOverrides overrides) {
-    size_t expectedGlobalFeaturesSize = 1;
-    if (overrides.mGlobalFeatures.size() != expectedGlobalFeaturesSize) {
-        return testing::AssertionFailure()
-                << "overrides.mGlobalFeatures.size(): " << overrides.mGlobalFeatures.size()
-                << ", expected: " << expectedGlobalFeaturesSize;
-    }
-
-    size_t expectedPackageFeaturesSize = 0;
-    if (overrides.mPackageFeatures.size() != expectedPackageFeaturesSize) {
-        return testing::AssertionFailure()
-                << "overrides.mPackageFeatures.size(): " << overrides.mPackageFeatures.size()
-                << ", expected: " << expectedPackageFeaturesSize;
-    }
-
-    return testing::AssertionSuccess();
-}
-
-testing::AssertionResult validateGlobalOverrides1(FeatureOverrides overrides) {
+testing::AssertionResult validateGlobalOverrides1(const FeatureOverrides &overrides) {
     const int kTestFeatureIndex = 0;
     const std::string expectedFeatureName = "globalOverrides1";
     const FeatureConfig &cfg = overrides.mGlobalFeatures[kTestFeatureIndex];
@@ -127,13 +97,106 @@ testing::AssertionResult validateGlobalOverrides1(FeatureOverrides overrides) {
 }
 
 TEST_F(FeatureOverrideParserTest, globalOverrides1) {
-    FeatureOverrides overrides = mFeatureOverrideParser.getFeatureOverrides();
+    FeatureOverrideParser featureOverrideParser(getTestBinarypbPath(kFilename));
+    const FeatureOverrides &overrides = featureOverrideParser.getCachedFeatureOverrides();
 
     EXPECT_TRUE(validateFeatureConfigTestTxtpbSizes(overrides));
     EXPECT_TRUE(validateGlobalOverrides1(overrides));
 }
 
-testing::AssertionResult validatePackageOverrides1(FeatureOverrides overrides) {
+testing::AssertionResult validateGlobalOverrides2(const FeatureOverrides &overrides) {
+    const int kTestFeatureIndex = 1;
+    const std::string expectedFeatureName = "globalOverrides2";
+    const FeatureConfig &cfg = overrides.mGlobalFeatures[kTestFeatureIndex];
+
+    if (cfg.mFeatureName != expectedFeatureName) {
+        return testing::AssertionFailure()
+                << "cfg.mFeatureName: " << cfg.mFeatureName
+                << ", expected: " << expectedFeatureName;
+    }
+
+    bool expectedEnabled = true;
+    if (cfg.mEnabled != expectedEnabled) {
+        return testing::AssertionFailure()
+                << "cfg.mEnabled: " << cfg.mEnabled
+                << ", expected: " << expectedEnabled;
+    }
+
+    std::vector<uint32_t> expectedGpuVendorIDs = {
+        0,      // GpuVendorID::VENDOR_ID_TEST
+        0x13B5, // GpuVendorID::VENDOR_ID_ARM
+    };
+    if (cfg.mGpuVendorIDs.size() != expectedGpuVendorIDs.size()) {
+        return testing::AssertionFailure()
+                << "cfg.mGpuVendorIDs.size(): " << cfg.mGpuVendorIDs.size()
+                << ", expected: " << expectedGpuVendorIDs.size();
+    }
+    for (int i = 0; i < expectedGpuVendorIDs.size(); i++) {
+        if (cfg.mGpuVendorIDs[i] != expectedGpuVendorIDs[i]) {
+            std::stringstream msg;
+            msg << "cfg.mGpuVendorIDs[" << i << "]: 0x" << std::hex << cfg.mGpuVendorIDs[i]
+                << ", expected: 0x" << std::hex << expectedGpuVendorIDs[i];
+            return testing::AssertionFailure() << msg.str();
+        }
+    }
+
+    return testing::AssertionSuccess();
+}
+
+TEST_F(FeatureOverrideParserTest, globalOverrides2) {
+    FeatureOverrideParser featureOverrideParser(getTestBinarypbPath(kFilename));
+    const FeatureOverrides &overrides = featureOverrideParser.getCachedFeatureOverrides();
+
+    EXPECT_TRUE(validateGlobalOverrides2(overrides));
+}
+
+testing::AssertionResult validateGlobalOverrides3(const FeatureOverrides &overrides) {
+    const int kTestFeatureIndex = 2;
+    const std::string expectedFeatureName = "globalOverrides3";
+    const FeatureConfig &cfg = overrides.mGlobalFeatures[kTestFeatureIndex];
+
+    if (cfg.mFeatureName != expectedFeatureName) {
+        return testing::AssertionFailure()
+                << "cfg.mFeatureName: " << cfg.mFeatureName
+                << ", expected: " << expectedFeatureName;
+    }
+
+    bool expectedEnabled = true;
+    if (cfg.mEnabled != expectedEnabled) {
+        return testing::AssertionFailure()
+                << "cfg.mEnabled: " << cfg.mEnabled
+                << ", expected: " << expectedEnabled;
+    }
+
+    std::vector<uint32_t> expectedGpuVendorIDs = {
+            0,      // GpuVendorID::VENDOR_ID_TEST
+            0x8086, // GpuVendorID::VENDOR_ID_INTEL
+    };
+    if (cfg.mGpuVendorIDs.size() != expectedGpuVendorIDs.size()) {
+        return testing::AssertionFailure()
+                << "cfg.mGpuVendorIDs.size(): " << cfg.mGpuVendorIDs.size()
+                << ", expected: " << expectedGpuVendorIDs.size();
+    }
+    for (int i = 0; i < expectedGpuVendorIDs.size(); i++) {
+        if (cfg.mGpuVendorIDs[i] != expectedGpuVendorIDs[i]) {
+            std::stringstream msg;
+            msg << "cfg.mGpuVendorIDs[" << i << "]: 0x" << std::hex << cfg.mGpuVendorIDs[i]
+                << ", expected: 0x" << std::hex << expectedGpuVendorIDs[i];
+            return testing::AssertionFailure() << msg.str();
+        }
+    }
+
+    return testing::AssertionSuccess();
+}
+
+TEST_F(FeatureOverrideParserTest, globalOverrides3) {
+    FeatureOverrideParser featureOverrideParser(getTestBinarypbPath(kFilename));
+    const FeatureOverrides &overrides = featureOverrideParser.getCachedFeatureOverrides();
+
+    EXPECT_TRUE(validateGlobalOverrides3(overrides));
+}
+
+testing::AssertionResult validatePackageOverrides1(const FeatureOverrides &overrides) {
     const std::string expectedTestPackageName = "com.gpuservice_unittest.packageOverrides1";
 
     if (!overrides.mPackageFeatures.count(expectedTestPackageName)) {
@@ -143,7 +206,7 @@ testing::AssertionResult validatePackageOverrides1(FeatureOverrides overrides) {
     }
 
     const std::vector<FeatureConfig>& features =
-            overrides.mPackageFeatures[expectedTestPackageName];
+            overrides.mPackageFeatures.at(expectedTestPackageName);
 
     size_t expectedFeaturesSize = 1;
     if (features.size() != expectedFeaturesSize) {
@@ -154,6 +217,12 @@ testing::AssertionResult validatePackageOverrides1(FeatureOverrides overrides) {
 
     const std::string expectedFeatureName = "packageOverrides1";
     const FeatureConfig &cfg = features[0];
+
+    if (cfg.mFeatureName != expectedFeatureName) {
+        return testing::AssertionFailure()
+                << "cfg.mFeatureName: " << cfg.mFeatureName
+                << ", expected: " << expectedFeatureName;
+    }
 
     bool expectedEnabled = true;
     if (cfg.mEnabled != expectedEnabled) {
@@ -166,17 +235,33 @@ testing::AssertionResult validatePackageOverrides1(FeatureOverrides overrides) {
 }
 
 TEST_F(FeatureOverrideParserTest, packageOverrides1) {
-    FeatureOverrides overrides = mFeatureOverrideParser.getFeatureOverrides();
+    FeatureOverrideParser featureOverrideParser(getTestBinarypbPath(kFilename));
+    const FeatureOverrides &overrides = featureOverrideParser.getCachedFeatureOverrides();
 
     EXPECT_TRUE(validateFeatureConfigTestTxtpbSizes(overrides));
     EXPECT_TRUE(validatePackageOverrides1(overrides));
 }
 
-testing::AssertionResult validateForceFileRead(FeatureOverrides overrides) {
-    const int kTestFeatureIndex = 0;
-    const std::string expectedFeatureName = "forceFileRead";
+testing::AssertionResult validatePackageOverrides2(const FeatureOverrides &overrides) {
+    const std::string expectedPackageName = "com.gpuservice_unittest.packageOverrides2";
 
-    const FeatureConfig &cfg = overrides.mGlobalFeatures[kTestFeatureIndex];
+    if (!overrides.mPackageFeatures.count(expectedPackageName)) {
+        return testing::AssertionFailure()
+                << "overrides.mPackageFeatures missing expected package: " << expectedPackageName;
+    }
+
+    const std::vector<FeatureConfig>& features = overrides.mPackageFeatures.at(expectedPackageName);
+
+    size_t expectedFeaturesSize = 1;
+    if (features.size() != expectedFeaturesSize) {
+        return testing::AssertionFailure()
+                << "features.size(): " << features.size()
+                << ", expectedFeaturesSize: " << expectedFeaturesSize;
+    }
+
+    const std::string expectedFeatureName = "packageOverrides2";
+    const FeatureConfig &cfg = features[0];
+
     if (cfg.mFeatureName != expectedFeatureName) {
         return testing::AssertionFailure()
                 << "cfg.mFeatureName: " << cfg.mFeatureName
@@ -190,28 +275,127 @@ testing::AssertionResult validateForceFileRead(FeatureOverrides overrides) {
                 << ", expected: " << expectedEnabled;
     }
 
+    std::vector<uint32_t> expectedGpuVendorIDs = {
+            0,      // GpuVendorID::VENDOR_ID_TEST
+            0x8086, // GpuVendorID::VENDOR_ID_INTEL
+    };
+    if (cfg.mGpuVendorIDs.size() != expectedGpuVendorIDs.size()) {
+        return testing::AssertionFailure()
+                << "cfg.mGpuVendorIDs.size(): " << cfg.mGpuVendorIDs.size()
+                << ", expected: " << expectedGpuVendorIDs.size();
+    }
+    for (int i = 0; i < expectedGpuVendorIDs.size(); i++) {
+        if (cfg.mGpuVendorIDs[i] != expectedGpuVendorIDs[i]) {
+            std::stringstream msg;
+            msg << "cfg.mGpuVendorIDs[" << i << "]: 0x" << std::hex << cfg.mGpuVendorIDs[i]
+                << ", expected: 0x" << std::hex << expectedGpuVendorIDs[i];
+            return testing::AssertionFailure() << msg.str();
+        }
+    }
+
     return testing::AssertionSuccess();
 }
 
-TEST_F(FeatureOverrideParserTest, forceFileRead) {
-    FeatureOverrides overrides = mFeatureOverrideParser.getFeatureOverrides();
+TEST_F(FeatureOverrideParserTest, packageOverrides2) {
+    FeatureOverrideParser featureOverrideParser(getTestBinarypbPath(kFilename));
+        const FeatureOverrides &overrides = featureOverrideParser.getCachedFeatureOverrides();
 
-    // Validate the "original" contents are present.
-    EXPECT_TRUE(validateFeatureConfigTestTxtpbSizes(overrides));
-    EXPECT_TRUE(validateGlobalOverrides1(overrides));
+    EXPECT_TRUE(validatePackageOverrides2(overrides));
+}
 
-    // "Update" the config file.
-    const std::string filename = "gpuservice_unittest_feature_config_vk_force_read.binarypb";
-    EXPECT_CALL(mFeatureOverrideParser, getFeatureOverrideFilePath())
-        .WillRepeatedly(Return(getTestBinarypbPath(filename)));
+testing::AssertionResult validatePackageOverrides3(const FeatureOverrides &overrides) {
+    const std::string expectedPackageName = "com.gpuservice_unittest.packageOverrides3";
 
-    mFeatureOverrideParser.forceFileRead();
+    if (!overrides.mPackageFeatures.count(expectedPackageName)) {
+        return testing::AssertionFailure()
+                << "overrides.mPackageFeatures missing expected package: " << expectedPackageName;
+    }
 
-    overrides = mFeatureOverrideParser.getFeatureOverrides();
+    const std::vector<FeatureConfig>& features = overrides.mPackageFeatures.at(expectedPackageName);
 
-    // Validate the new file contents were read and parsed.
-    EXPECT_TRUE(validateFeatureConfigTestForceReadTxtpbSizes(overrides));
-    EXPECT_TRUE(validateForceFileRead(overrides));
+    size_t expectedFeaturesSize = 2;
+    if (features.size() != expectedFeaturesSize) {
+        return testing::AssertionFailure()
+                << "features.size(): " << features.size()
+                << ", expectedFeaturesSize: " << expectedFeaturesSize;
+    }
+
+    std::string expectedFeatureName = "packageOverrides3_1";
+    const FeatureConfig &cfg_1 = features[0];
+
+    if (cfg_1.mFeatureName != expectedFeatureName) {
+        return testing::AssertionFailure()
+                << "cfg.mFeatureName: " << cfg_1.mFeatureName
+                << ", expected: " << expectedFeatureName;
+    }
+
+    bool expectedEnabled = false;
+    if (cfg_1.mEnabled != expectedEnabled) {
+        return testing::AssertionFailure()
+                << "cfg.mEnabled: " << cfg_1.mEnabled
+                << ", expected: " << expectedEnabled;
+    }
+
+    std::vector<uint32_t> expectedGpuVendorIDs = {
+            0,      // GpuVendorID::VENDOR_ID_TEST
+            0x13B5, // GpuVendorID::VENDOR_ID_ARM
+    };
+    if (cfg_1.mGpuVendorIDs.size() != expectedGpuVendorIDs.size()) {
+        return testing::AssertionFailure()
+                << "cfg.mGpuVendorIDs.size(): " << cfg_1.mGpuVendorIDs.size()
+                << ", expected: " << expectedGpuVendorIDs.size();
+    }
+    for (int i = 0; i < expectedGpuVendorIDs.size(); i++) {
+        if (cfg_1.mGpuVendorIDs[i] != expectedGpuVendorIDs[i]) {
+            std::stringstream msg;
+            msg << "cfg.mGpuVendorIDs[" << i << "]: 0x" << std::hex << cfg_1.mGpuVendorIDs[i]
+                << ", expected: 0x" << std::hex << expectedGpuVendorIDs[i];
+            return testing::AssertionFailure() << msg.str();
+        }
+    }
+
+    expectedFeatureName = "packageOverrides3_2";
+    const FeatureConfig &cfg_2 = features[1];
+
+    if (cfg_2.mFeatureName != expectedFeatureName) {
+        return testing::AssertionFailure()
+                << "cfg.mFeatureName: " << cfg_2.mFeatureName
+                << ", expected: " << expectedFeatureName;
+    }
+
+    expectedEnabled = true;
+    if (cfg_2.mEnabled != expectedEnabled) {
+        return testing::AssertionFailure()
+                << "cfg.mEnabled: " << cfg_2.mEnabled
+                << ", expected: " << expectedEnabled;
+    }
+
+    expectedGpuVendorIDs = {
+            0,      // GpuVendorID::VENDOR_ID_TEST
+            0x8086, // GpuVendorID::VENDOR_ID_INTEL
+    };
+    if (cfg_2.mGpuVendorIDs.size() != expectedGpuVendorIDs.size()) {
+        return testing::AssertionFailure()
+                << "cfg.mGpuVendorIDs.size(): " << cfg_2.mGpuVendorIDs.size()
+                << ", expected: " << expectedGpuVendorIDs.size();
+    }
+    for (int i = 0; i < expectedGpuVendorIDs.size(); i++) {
+        if (cfg_2.mGpuVendorIDs[i] != expectedGpuVendorIDs[i]) {
+            std::stringstream msg;
+            msg << "cfg.mGpuVendorIDs[" << i << "]: 0x" << std::hex << cfg_2.mGpuVendorIDs[i]
+                << ", expected: 0x" << std::hex << expectedGpuVendorIDs[i];
+            return testing::AssertionFailure() << msg.str();
+        }
+    }
+
+    return testing::AssertionSuccess();
+}
+
+TEST_F(FeatureOverrideParserTest, packageOverrides3) {
+    FeatureOverrideParser featureOverrideParser(getTestBinarypbPath(kFilename));
+        const FeatureOverrides &overrides = featureOverrideParser.getCachedFeatureOverrides();
+
+    EXPECT_TRUE(validatePackageOverrides3(overrides));
 }
 
 } // namespace

@@ -37,6 +37,7 @@
 #include <gui/DebugEGLImageTracker.h>
 #include <gui/GLConsumer.h>
 #include <gui/ISurfaceComposer.h>
+#include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
 
 #include <private/gui/ComposerService.h>
@@ -101,7 +102,32 @@ static bool hasEglProtectedContent() {
     return hasIt;
 }
 
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
+std::tuple<sp<GLConsumer>, sp<Surface>> GLConsumer::create(uint32_t tex, uint32_t textureTarget,
+                                                           bool useFenceSync,
+                                                           bool isControlledByApp) {
+    sp<GLConsumer> consumer =
+            sp<GLConsumer>::make(tex, textureTarget, useFenceSync, isControlledByApp);
+    return {consumer, consumer->getSurface()};
+}
+
+std::tuple<sp<GLConsumer>, sp<Surface>> GLConsumer::create(uint32_t textureTarget,
+                                                           bool useFenceSync,
+                                                           bool isControlledByApp) {
+    sp<GLConsumer> consumer = sp<GLConsumer>::make(textureTarget, useFenceSync, isControlledByApp);
+    return {consumer, consumer->getSurface()};
+}
+
+sp<GLConsumer> GLConsumer::create(const sp<IGraphicBufferConsumer>& bq, uint32_t tex,
+                                  uint32_t textureTarget, bool useFenceSync,
+                                  bool isControlledByApp) {
+    return sp<GLConsumer>::make(bq, tex, textureTarget, useFenceSync, isControlledByApp);
+}
+
+sp<GLConsumer> GLConsumer::create(const sp<IGraphicBufferConsumer>& bq, uint32_t textureTarget,
+                                  bool useFenceSync, bool isControlledByApp) {
+    return sp<GLConsumer>::make(bq, textureTarget, useFenceSync, isControlledByApp);
+}
+
 GLConsumer::GLConsumer(uint32_t tex, uint32_t texTarget, bool useFenceSync, bool isControlledByApp)
       : ConsumerBase(isControlledByApp, /* isConsumerSurfaceFlinger */ false),
         mCurrentCrop(Rect::EMPTY_RECT),
@@ -130,7 +156,6 @@ GLConsumer::GLConsumer(uint32_t tex, uint32_t texTarget, bool useFenceSync, bool
 
     mConsumer->setConsumerUsageBits(DEFAULT_USAGE_FLAGS);
 }
-#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
 
 GLConsumer::GLConsumer(const sp<IGraphicBufferConsumer>& bq, uint32_t tex, uint32_t texTarget,
                        bool useFenceSync, bool isControlledByApp)
@@ -157,13 +182,9 @@ GLConsumer::GLConsumer(const sp<IGraphicBufferConsumer>& bq, uint32_t tex, uint3
         mAttached(true) {
     GLC_LOGV("GLConsumer");
 
-    memcpy(mCurrentTransformMatrix, mtxIdentity.asArray(),
-            sizeof(mCurrentTransformMatrix));
-
-    mConsumer->setConsumerUsageBits(DEFAULT_USAGE_FLAGS);
+    memcpy(mCurrentTransformMatrix, mtxIdentity.asArray(), sizeof(mCurrentTransformMatrix));
 }
 
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
 GLConsumer::GLConsumer(uint32_t texTarget, bool useFenceSync, bool isControlledByApp)
       : ConsumerBase(isControlledByApp, /* isConsumerSurfaceFlinger */ false),
         mCurrentCrop(Rect::EMPTY_RECT),
@@ -189,10 +210,7 @@ GLConsumer::GLConsumer(uint32_t texTarget, bool useFenceSync, bool isControlledB
     GLC_LOGV("GLConsumer");
 
     memcpy(mCurrentTransformMatrix, mtxIdentity.asArray(), sizeof(mCurrentTransformMatrix));
-
-    mConsumer->setConsumerUsageBits(DEFAULT_USAGE_FLAGS);
 }
-#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
 
 GLConsumer::GLConsumer(const sp<IGraphicBufferConsumer>& bq, uint32_t texTarget, bool useFenceSync,
                        bool isControlledByApp)
@@ -221,8 +239,15 @@ GLConsumer::GLConsumer(const sp<IGraphicBufferConsumer>& bq, uint32_t texTarget,
 
     memcpy(mCurrentTransformMatrix, mtxIdentity.asArray(),
             sizeof(mCurrentTransformMatrix));
+}
 
+void GLConsumer::initializeConsumer() {
     mConsumer->setConsumerUsageBits(DEFAULT_USAGE_FLAGS);
+}
+
+void GLConsumer::onFirstRef() {
+    ConsumerBase::onFirstRef();
+    initializeConsumer();
 }
 
 status_t GLConsumer::setDefaultBufferSize(uint32_t w, uint32_t h)
@@ -333,7 +358,7 @@ status_t GLConsumer::releaseTexImage() {
         }
 
         if (mReleasedTexImage == nullptr) {
-            mReleasedTexImage = new EglImage(getDebugTexImageBuffer());
+            mReleasedTexImage = sp<EglImage>::make(getDebugTexImageBuffer());
         }
 
         mCurrentTexture = BufferQueue::INVALID_BUFFER_SLOT;
@@ -365,10 +390,10 @@ sp<GraphicBuffer> GLConsumer::getDebugTexImageBuffer() {
     if (CC_UNLIKELY(sReleasedTexImageBuffer == nullptr)) {
         // The first time, create the debug texture in case the application
         // continues to use it.
-        sp<GraphicBuffer> buffer = new GraphicBuffer(
-                kDebugData.width, kDebugData.height, PIXEL_FORMAT_RGBA_8888,
-                DEFAULT_USAGE_FLAGS | GraphicBuffer::USAGE_SW_WRITE_RARELY,
-                "[GLConsumer debug texture]");
+        sp<GraphicBuffer> buffer =
+                sp<GraphicBuffer>::make(kDebugData.width, kDebugData.height, PIXEL_FORMAT_RGBA_8888,
+                                        DEFAULT_USAGE_FLAGS | GraphicBuffer::USAGE_SW_WRITE_RARELY,
+                                        "[GLConsumer debug texture]");
         uint32_t* bits;
         buffer->lock(GraphicBuffer::USAGE_SW_WRITE_RARELY, reinterpret_cast<void**>(&bits));
         uint32_t stride = buffer->getStride();
@@ -400,7 +425,7 @@ status_t GLConsumer::acquireBufferLocked(BufferItem *item,
     // replaces any old EglImage with a new one (using the new buffer).
     if (item->mGraphicBuffer != nullptr) {
         int slot = item->mSlot;
-        mEglSlots[slot].mEglImage = new EglImage(item->mGraphicBuffer);
+        mEglSlots[slot].mEglImage = sp<EglImage>::make(item->mGraphicBuffer);
     }
 
     return NO_ERROR;
@@ -737,7 +762,7 @@ status_t GLConsumer::syncForReleaseLocked(EGLDisplay dpy) {
                         "fd: %#x", eglGetError());
                 return UNKNOWN_ERROR;
             }
-            sp<Fence> fence(new Fence(fenceFd));
+            sp<Fence> fence = sp<Fence>::make(fenceFd);
             status_t err = addReleaseFenceLocked(mCurrentTexture,
                     mCurrentTextureImage->graphicBuffer(), fence);
             if (err != OK) {

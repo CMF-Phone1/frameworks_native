@@ -27,6 +27,7 @@ cc_aconfig_library {
 cc_defaults {
     name: "libgpuservice_defaults",
     defaults: [
+        "aconfig_lib_cc_static_link.defaults",
         "gpuservice_defaults",
         "libfeatureoverride_deps",
         "libgfxstats_deps",
@@ -120,7 +121,7 @@ cc_binary {
     init_rc: ["gpuservice.rc"],
     required: [
         "bpfloader",
-        "gpuMem.o",
+        "gpuMem.bpf",
     ],
     srcs: [":gpuservice_binary_sources"],
     static_libs: [

@@ -20,8 +20,6 @@
 
 // #define LOG_NDEBUG 0
 
-#undef LOG_TAG
-#define LOG_TAG "HWC2"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include "HWC2.h"
@@ -439,11 +437,8 @@ Error Display::setActiveConfigWithConstraints(hal::HWConfigId configId,
     // FIXME (b/319505580): At least the first config set on an external display must be
     // `setActiveConfig`, so skip over the block that calls `setActiveConfigWithConstraints`
     // for simplicity.
-    const bool connected_display = FlagManager::getInstance().connected_display();
-
     if (isVsyncPeriodSwitchSupported() &&
-        (!connected_display ||
-         getConnectionType().value_opt() != ui::DisplayConnectionType::External)) {
+        getConnectionType().value_opt() != ui::DisplayConnectionType::External) {
         Hwc2::IComposerClient::VsyncPeriodChangeConstraints hwc2Constraints;
         hwc2Constraints.desiredTimeNanos = constraints.desiredTimeNanos;
         hwc2Constraints.seamlessRequired = constraints.seamlessRequired;
@@ -629,19 +624,23 @@ Error Display::getRequestedLuts(LayerLuts* outLuts,
         auto layer = getLayerById(layerIds[i]);
         if (layer) {
             auto& layerLut = tmpLuts[i];
+            std::vector<std::pair<int32_t, LutProperties>> lutOffsetsAndProperties;
             if (layerLut.luts.pfd.get() >= 0 && layerLut.luts.offsets.has_value()) {
                 const auto& offsets = layerLut.luts.offsets.value();
-                std::vector<std::pair<int32_t, LutProperties>> lutOffsetsAndProperties;
                 lutOffsetsAndProperties.reserve(offsets.size());
                 std::transform(offsets.begin(), offsets.end(), layerLut.luts.lutProperties.begin(),
                                std::back_inserter(lutOffsetsAndProperties),
                                [](int32_t i, LutProperties j) { return std::make_pair(i, j); });
                 outLuts->emplace_or_replace(layer.get(), lutOffsetsAndProperties);
                 lutFileDescriptorMapper.emplace_or_replace(layer.get(),
-                                                           ndk::ScopedFileDescriptor(
+                                                           ::android::base::unique_fd(
                                                                    layerLut.luts.pfd.release()));
+            } else if (layerLut.luts.pfd.get() < 0) {
+                outLuts->emplace_or_replace(layer.get(), lutOffsetsAndProperties);
+                lutFileDescriptorMapper.emplace_or_replace(layer.get(),
+                                                           ::android::base::unique_fd());
             } else {
-                ALOGE("getRequestedLuts: invalid luts on layer %" PRIu64 " found"
+                ALOGE("getRequestedLuts: invalid luts offsets on layer %" PRIu64 " found"
                       " on display %" PRIu64 ". pfd.get()=%d, offsets.has_value()=%d",
                       layerIds[i], mId, layerLut.luts.pfd.get(), layerLut.luts.offsets.has_value());
             }
@@ -677,9 +676,36 @@ Error Display::setPictureProfileHandle(const PictureProfileHandle& handle) {
     return static_cast<Error>(error);
 }
 
+Error Display::startHdcpNegotiation(const aidl::android::hardware::drm::HdcpLevels& levels) {
+    const auto error = mComposer.startHdcpNegotiation(mId, levels);
+    return static_cast<Error>(error);
+}
+
 Error Display::getLuts(const std::vector<sp<GraphicBuffer>>& buffers,
                        std::vector<aidl::android::hardware::graphics::composer3::Luts>* outLuts) {
     const auto error = mComposer.getLuts(mId, buffers, outLuts);
+    return static_cast<Error>(error);
+}
+
+Error Display::getReadbackBufferAttributes(
+        aidl::android::hardware::graphics::composer3::ReadbackBufferAttributes* outAttributes) {
+    const auto error = mComposer.getReadbackBufferAttributes(mId, outAttributes);
+    return static_cast<Error>(error);
+}
+
+Error Display::setReadbackBuffer(const sp<GraphicBuffer>& buffer,
+                                 const android::sp<android::Fence>& acquireFence) {
+    const auto error = mComposer.setReadbackBuffer(mId, buffer, acquireFence->dup());
+    return static_cast<Error>(error);
+}
+
+Error Display::getReadbackBufferFence(android::sp<android::Fence>* outReleaseFence) {
+    int fence;
+    const auto error = mComposer.getReadbackBufferFence(mId, &fence);
+    if (error != Error::NONE) {
+        return error;
+    }
+    *outReleaseFence = sp<Fence>::make(fence);
     return static_cast<Error>(error);
 }
 

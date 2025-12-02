@@ -18,9 +18,6 @@
 
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
-#undef LOG_TAG
-#define LOG_TAG "PowerAdvisor"
-
 #include <unistd.h>
 #include <cinttypes>
 #include <cstdint>
@@ -200,7 +197,7 @@ void PowerAdvisor::sendHintSessionHint(hal::SessionHint hint) {
         return;
     }
     SFTRACE_CALL();
-    if (sTraceHintSessionData) SFTRACE_INT("Session hint", static_cast<int>(hint));
+    SFTRACE_INT("Session hint", static_cast<int>(hint));
     {
         std::scoped_lock lock(mHintSessionMutex);
         if (!ensurePowerHintSessionRunning()) {
@@ -229,8 +226,7 @@ bool PowerAdvisor::ensurePowerHintSessionRunning() {
                                                                  &mSessionConfig);
             if (ret.isOk()) {
                 mHintSession = ret.value();
-                if (FlagManager::getInstance().adpf_use_fmq_channel_fixed() &&
-                    FlagManager::getInstance().adpf_fmq_sf()) {
+                if (FlagManager::getInstance().adpf_use_fmq_channel_fixed()) {
                     setUpFmq();
                 }
             }
@@ -288,7 +284,7 @@ void PowerAdvisor::updateTargetWorkDuration(Duration targetDuration) {
     SFTRACE_CALL();
     {
         mTargetDuration = targetDuration;
-        if (sTraceHintSessionData) SFTRACE_INT64("Time target", targetDuration.ns());
+        SFTRACE_INT64("Target Work Duration", targetDuration.ns());
         if (targetDuration == mLastTargetDurationSent) return;
         std::scoped_lock lock(mHintSessionMutex);
         if (!ensurePowerHintSessionRunning()) {
@@ -321,14 +317,15 @@ void PowerAdvisor::reportActualWorkDuration() {
         return;
     }
     actualDuration->durationNanos += sTargetSafetyMargin.ns();
+    SFTRACE_INT64("Reported Work Duration", actualDuration->durationNanos);
+    if (supportsGpuReporting()) {
+        SFTRACE_INT64("Reported cpu duration", actualDuration->cpuDurationNanos);
+        SFTRACE_INT64("Reported gpu duration", actualDuration->gpuDurationNanos);
+    }
+
     if (sTraceHintSessionData) {
         SFTRACE_INT64("Measured duration", actualDuration->durationNanos);
         SFTRACE_INT64("Target error term", actualDuration->durationNanos - mTargetDuration.ns());
-        SFTRACE_INT64("Reported duration", actualDuration->durationNanos);
-        if (supportsGpuReporting()) {
-            SFTRACE_INT64("Reported cpu duration", actualDuration->cpuDurationNanos);
-            SFTRACE_INT64("Reported gpu duration", actualDuration->gpuDurationNanos);
-        }
         SFTRACE_INT64("Reported target", mLastTargetDurationSent.ns());
         SFTRACE_INT64("Reported target error term",
                       actualDuration->durationNanos - mLastTargetDurationSent.ns());
@@ -515,7 +512,7 @@ void PowerAdvisor::setRequiresRenderEngine(DisplayId displayId, bool requiresRen
 }
 
 void PowerAdvisor::setExpectedPresentTime(TimePoint expectedPresentTime) {
-    mExpectedPresentTimes.append(expectedPresentTime);
+    mExpectedPresentTimes.next() = expectedPresentTime;
 }
 
 void PowerAdvisor::setSfPresentTiming(TimePoint presentFenceTime, TimePoint presentEndTime) {
@@ -532,7 +529,7 @@ void PowerAdvisor::setHwcPresentDelayedTime(DisplayId displayId, TimePoint earli
 }
 
 void PowerAdvisor::setCommitStart(TimePoint commitStartTime) {
-    mCommitStartTimes.append(commitStartTime);
+    mCommitStartTimes.next() = commitStartTime;
 }
 
 void PowerAdvisor::setCompositeEnd(TimePoint compositeEndTime) {
@@ -553,7 +550,7 @@ std::shared_ptr<SessionManager> PowerAdvisor::getSessionManager() {
 
 sp<IBinder> PowerAdvisor::getOrCreateSessionManagerForBinder(uid_t uid) {
     // Flag guards the creation of SessionManager
-    if (mSessionManager == nullptr && FlagManager::getInstance().adpf_native_session_manager()) {
+    if (mSessionManager == nullptr) {
         mSessionManager = ndk::SharedRefBase::make<SessionManager>(uid);
     }
     return AIBinder_toPlatformBinder(mSessionManager->asBinder().get());
@@ -579,7 +576,7 @@ std::optional<hal::WorkDuration> PowerAdvisor::estimateWorkDuration() {
     }
 
     // Tracks when we finish presenting to hwc
-    TimePoint estimatedHwcEndTime = mCommitStartTimes[0];
+    TimePoint estimatedHwcEndTime = mCommitStartTimes.back();
 
     // How long we spent this frame not doing anything, waiting for fences or vsync
     Duration idleDuration = 0ns;
@@ -643,13 +640,13 @@ std::optional<hal::WorkDuration> PowerAdvisor::estimateWorkDuration() {
     // Also add the frame delay duration since the target did not move while we were delayed
     Duration totalDuration = mFrameDelayDuration +
             std::max(estimatedHwcEndTime, estimatedGpuEndTime.value_or(TimePoint{0ns})) -
-            mCommitStartTimes[0];
+            mCommitStartTimes.back();
     Duration totalDurationWithoutGpu =
-            mFrameDelayDuration + estimatedHwcEndTime - mCommitStartTimes[0];
+            mFrameDelayDuration + estimatedHwcEndTime - mCommitStartTimes.back();
 
     // We finish SurfaceFlinger when post-composition finishes, so add that in here
     Duration flingerDuration =
-            estimatedFlingerEndTime + mLastPostcompDuration - mCommitStartTimes[0];
+            estimatedFlingerEndTime + mLastPostcompDuration - mCommitStartTimes.back();
     Duration estimatedGpuDuration = firstGpuTimeline.has_value()
             ? estimatedGpuEndTime.value_or(TimePoint{0ns}) - firstGpuTimeline->startTime
             : Duration::fromNs(0);
@@ -661,7 +658,7 @@ std::optional<hal::WorkDuration> PowerAdvisor::estimateWorkDuration() {
     hal::WorkDuration duration{
             .timeStampNanos = TimePoint::now().ns(),
             .durationNanos = combinedDuration.ns(),
-            .workPeriodStartTimestampNanos = mCommitStartTimes[0].ns(),
+            .workPeriodStartTimestampNanos = mCommitStartTimes.back().ns(),
             .cpuDurationNanos = supportsGpuReporting() ? cpuDuration.ns() : 0,
             .gpuDurationNanos = supportsGpuReporting() ? estimatedGpuDuration.ns() : 0,
     };
@@ -807,7 +804,13 @@ void PowerAdvisor::setCommittedWorkload(ftl::Flags<Workload> workload) {
                                               ftl::truncated<20>(mCommittedWorkload.string()))
                                           .c_str());
 
-        // TODO(b/385028458) load up hint
+        // TODO(b/385028458) load up hint for other increased workloads.
+
+        // Provides a load up hint only for effects that require client
+        // composition, such as blur or shadows.
+        if (mCommittedWorkload.any(adpf::Workload::EFFECTS)) {
+            notifyCpuLoadUp();
+        }
     }
 }
 

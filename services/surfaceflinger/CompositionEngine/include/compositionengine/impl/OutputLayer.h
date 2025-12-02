@@ -28,8 +28,6 @@
 #include <ui/PictureProfileHandle.h>
 #include <ui/Rect.h>
 
-#include <ui/DisplayIdentification.h>
-
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 
 using aidl::android::hardware::graphics::composer3::LutProperties;
@@ -68,7 +66,7 @@ public:
             aidl::android::hardware::graphics::composer3::Composition) override;
     void prepareForDeviceLayerRequests() override;
     void applyDeviceLayerRequest(Hwc2::IComposerClient::LayerRequest request) override;
-    void applyDeviceLayerLut(ndk::ScopedFileDescriptor,
+    void applyDeviceLayerLut(::android::base::unique_fd,
                              std::vector<std::pair<int, LutProperties>>) override;
     bool needsFiltering() const override;
     std::optional<LayerFE::LayerSettings> getOverrideCompositionSettings() const override;

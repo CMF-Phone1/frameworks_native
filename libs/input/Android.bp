@@ -31,6 +31,7 @@ filegroup {
         "android/os/InputEventInjectionResult.aidl",
         "android/os/InputEventInjectionSync.aidl",
         "android/os/MotionEventFlag.aidl",
+        "android/os/PointerCaptureMode.aidl",
         "android/os/PointerIconType.aidl",
     ],
 }
@@ -133,6 +134,13 @@ rust_bindgen {
         "--allowlist-var=AMOTION_EVENT_ACTION_POINTER_DOWN",
         "--allowlist-var=AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT",
         "--allowlist-var=AMOTION_EVENT_ACTION_UP",
+        "--allowlist-var=AMOTION_EVENT_BUTTON_BACK",
+        "--allowlist-var=AMOTION_EVENT_BUTTON_FORWARD",
+        "--allowlist-var=AMOTION_EVENT_BUTTON_PRIMARY",
+        "--allowlist-var=AMOTION_EVENT_BUTTON_SECONDARY",
+        "--allowlist-var=AMOTION_EVENT_BUTTON_STYLUS_PRIMARY",
+        "--allowlist-var=AMOTION_EVENT_BUTTON_STYLUS_SECONDARY",
+        "--allowlist-var=AMOTION_EVENT_BUTTON_TERTIARY",
         "--allowlist-var=MAX_POINTER_ID",
         "--verbose",
     ],
@@ -175,7 +183,6 @@ cc_library_static {
 // Contains methods to help access C++ code from rust
 cc_library_static {
     name: "libinput_from_rust_to_cpp",
-    cpp_std: "c++20",
     host_supported: true,
     cflags: [
         "-Wall",
@@ -202,7 +209,6 @@ cc_library_static {
 
 cc_library {
     name: "libinput",
-    cpp_std: "c++20",
     host_supported: true,
     cflags: [
         "-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION",
@@ -215,14 +221,17 @@ cc_library {
         "-Wshadow-uncaptured-local",
         "-Wthread-safety",
     ],
+    afdo: true,
     srcs: [
         "AccelerationCurve.cpp",
         "CoordinateFilter.cpp",
+        "DisplayTopologyGraph.cpp",
         "Input.cpp",
         "InputConsumer.cpp",
         "InputConsumerNoResampling.cpp",
         "InputDevice.cpp",
         "InputEventLabels.cpp",
+        "InputFlags.cpp",
         "InputTransport.cpp",
         "InputVerifier.cpp",
         "KeyCharacterMap.cpp",
@@ -262,6 +271,7 @@ cc_library {
 
     shared_libs: [
         "android.companion.virtualdevice.flags-aconfig-cc",
+        "com.android.window.flags.window-aconfig_flags_c_lib",
         "libPlatformProperties",
         "libaconfig_storage_read_api_cc",
         "libbase",
@@ -369,7 +379,6 @@ genrule {
 
 cc_defaults {
     name: "libinput_fuzz_defaults",
-    cpp_std: "c++20",
     host_supported: true,
     shared_libs: [
         "libbase",

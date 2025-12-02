@@ -247,11 +247,7 @@ status_t BufferQueueProducer::setMaxDequeuedBufferCount(int maxDequeuedBuffers,
         if (delta < 0) {
             listener = mCore->mConsumerListener;
         }
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
         mCore->notifyBufferReleased();
-#else
-        mCore->mDequeueCondition.notify_all();
-#endif
     } // Autolock scope
 
     // Call back without lock held
@@ -303,11 +299,7 @@ status_t BufferQueueProducer::setAsyncMode(bool async) {
         }
         mCore->mAsyncMode = async;
         VALIDATE_CONSISTENCY();
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
         mCore->notifyBufferReleased();
-#else
-        mCore->mDequeueCondition.notify_all();
-#endif
 
         if (delta < 0) {
             listener = mCore->mConsumerListener;
@@ -430,29 +422,16 @@ status_t BufferQueueProducer::waitForFreeSlotThenRelock(FreeSlotCaller caller,
                     (acquiredCount <= mCore->mMaxAcquiredBufferCount)) {
                 return WOULD_BLOCK;
             }
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
             if (status_t status = waitForBufferRelease(lock, mDequeueTimeout);
                 status == TIMED_OUT) {
                 return TIMED_OUT;
             }
-#else
-            if (mDequeueTimeout >= 0) {
-                std::cv_status result = mCore->mDequeueCondition.wait_for(lock,
-                        std::chrono::nanoseconds(mDequeueTimeout));
-                if (result == std::cv_status::timeout) {
-                    return TIMED_OUT;
-                }
-            } else {
-                mCore->mDequeueCondition.wait(lock);
-            }
-#endif
         }
     } // while (tryAgain)
 
     return NO_ERROR;
 }
 
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
 status_t BufferQueueProducer::waitForBufferRelease(std::unique_lock<std::mutex>& lock,
                                                    nsecs_t timeout) const {
     if (mDequeueTimeout >= 0) {
@@ -466,7 +445,6 @@ status_t BufferQueueProducer::waitForBufferRelease(std::unique_lock<std::mutex>&
     }
     return OK;
 }
-#endif
 
 status_t BufferQueueProducer::dequeueBuffer(int* outSlot, sp<android::Fence>* outFence,
                                             uint32_t width, uint32_t height, PixelFormat format,
@@ -693,11 +671,11 @@ status_t BufferQueueProducer::dequeueBuffer(int* outSlot, sp<android::Fence>* ou
                 .requestorName = {mConsumerName.c_str(), mConsumerName.size()},
                 .extras = std::move(tempOptions),
         };
-        sp<GraphicBuffer> graphicBuffer = new GraphicBuffer(allocRequest);
+        sp<GraphicBuffer> graphicBuffer = sp<GraphicBuffer>::make(allocRequest);
 #else
         sp<GraphicBuffer> graphicBuffer =
-                new GraphicBuffer(width, height, format, BQ_LAYER_COUNT, usage,
-                                  {mConsumerName.c_str(), mConsumerName.size()});
+                sp<GraphicBuffer>::make(width, height, format, BQ_LAYER_COUNT, usage,
+                                        std::string{mConsumerName.c_str(), mConsumerName.size()});
 #endif
 
         status_t error = graphicBuffer->initCheck();
@@ -828,11 +806,7 @@ status_t BufferQueueProducer::detachBuffer(int slot) {
         mCore->mActiveBuffers.erase(slot);
         mCore->mFreeSlots.insert(slot);
         mCore->clearBufferSlotLocked(slot);
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
         mCore->notifyBufferReleased();
-#else
-        mCore->mDequeueCondition.notify_all();
-#endif
         VALIDATE_CONSISTENCY();
     }
 
@@ -1178,11 +1152,7 @@ status_t BufferQueueProducer::queueBuffer(int slot,
         }
 
         mCore->mBufferHasBeenQueued = true;
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
         mCore->notifyBufferReleased();
-#else
-        mCore->mDequeueCondition.notify_all();
-#endif
         mCore->mLastQueuedSlot = slot;
 
         output->width = mCore->mDefaultWidth;
@@ -1318,11 +1288,7 @@ status_t BufferQueueProducer::cancelBuffer(int slot, const sp<Fence>& fence) {
             bufferId = gb->getId();
         }
         mSlots[slot].mFence = fence;
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
         mCore->notifyBufferReleased();
-#else
-        mCore->mDequeueCondition.notify_all();
-#endif
         listener = mCore->mConsumerListener;
         VALIDATE_CONSISTENCY();
     }
@@ -1464,7 +1430,7 @@ status_t BufferQueueProducer::connect(const sp<IProducerListener>& listener,
 #ifndef NO_BINDER
                 if (IInterface::asBinder(listener)->remoteBinder() != nullptr) {
                     status = IInterface::asBinder(listener)->linkToDeath(
-                            static_cast<IBinder::DeathRecipient*>(this));
+                            sp<IBinder::DeathRecipient>::fromExisting(this));
                     if (status != NO_ERROR) {
                         BQ_LOGE("connect: linkToDeath failed: %s (%d)",
                                 strerror(-status), status);
@@ -1553,8 +1519,7 @@ status_t BufferQueueProducer::disconnect(int api, DisconnectMode mode) {
                                 IInterface::asBinder(mCore->mLinkedToDeath);
                         // This can fail if we're here because of the death
                         // notification, but we just ignore it
-                        token->unlinkToDeath(
-                                static_cast<IBinder::DeathRecipient*>(this));
+                        token->unlinkToDeath(wp<IBinder::DeathRecipient>::fromExisting(this));
                     }
 #endif
                     mCore->mSharedBufferSlot =
@@ -1564,11 +1529,7 @@ status_t BufferQueueProducer::disconnect(int api, DisconnectMode mode) {
                     mCore->mConnectedApi = BufferQueueCore::NO_CONNECTED_API;
                     mCore->mConnectedPid = -1;
                     mCore->mSidebandStream.clear();
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
                     mCore->notifyBufferReleased();
-#else
-                    mCore->mDequeueCondition.notify_all();
-#endif
                     mCore->mAutoPrerotation = false;
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_EXTENDEDALLOCATE)
                     mCore->mAdditionalOptions.clear();
@@ -1685,11 +1646,11 @@ void BufferQueueProducer::allocateBuffers(uint32_t width, uint32_t height,
 #endif
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_EXTENDEDALLOCATE)
-        sp<GraphicBuffer> graphicBuffer = new GraphicBuffer(allocRequest);
+        sp<GraphicBuffer> graphicBuffer = sp<GraphicBuffer>::make(allocRequest);
 #else
-        sp<GraphicBuffer> graphicBuffer = new GraphicBuffer(
-                allocWidth, allocHeight, allocFormat, BQ_LAYER_COUNT,
-                allocUsage, allocName);
+        sp<GraphicBuffer> graphicBuffer =
+                sp<GraphicBuffer>::make(allocWidth, allocHeight, allocFormat, BQ_LAYER_COUNT,
+                                        allocUsage, allocName);
 #endif
 
         status_t result = graphicBuffer->initCheck();
@@ -1951,7 +1912,6 @@ status_t BufferQueueProducer::setAutoPrerotation(bool autoPrerotation) {
     return NO_ERROR;
 }
 
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_SETFRAMERATE)
 status_t BufferQueueProducer::setFrameRate(float frameRate, int8_t compatibility,
                                            int8_t changeFrameRateStrategy) {
     ATRACE_CALL();
@@ -1972,7 +1932,6 @@ status_t BufferQueueProducer::setFrameRate(float frameRate, int8_t compatibility
     }
     return NO_ERROR;
 }
-#endif
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_EXTENDEDALLOCATE)
 status_t BufferQueueProducer::setAdditionalOptions(

@@ -27,9 +27,11 @@
 #include <android-base/thread_annotations.h>
 #include <ftl/expected.h>
 #include <ftl/future.h>
-#include <ui/DisplayIdentification.h>
+#include <ui/DisplayMap.h>
 #include <ui/FenceTime.h>
 #include <ui/PictureProfileHandle.h>
+
+#include "Display/DisplayIdentification.h"
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -114,7 +116,7 @@ public:
         float dpiY = -1.f;
         int32_t configGroup = -1;
         std::optional<hal::VrrConfig> vrrConfig;
-        OutputType hdrOutputType;
+        composer3::OutputType hdrOutputType;
 
         friend std::ostream& operator<<(std::ostream& os, const HWCDisplayMode& mode) {
             return os << "id=" << mode.hwcId << " res=" << mode.width << "x" << mode.height
@@ -129,8 +131,9 @@ public:
 
     virtual void setCallback(HWC2::ComposerCallback&) = 0;
 
-    virtual bool getDisplayIdentificationData(hal::HWDisplayId, uint8_t* outPort,
-                                              DisplayIdentificationData* outData) const = 0;
+    virtual bool getDisplayIdentificationData(
+            hal::HWDisplayId, uint8_t* outPort, display::DisplayIdentificationData* outData,
+            android::ScreenPartStatus* outScreenPartStatus) const = 0;
 
     virtual bool hasCapability(aidl::android::hardware::graphics::composer3::Capability) const = 0;
     virtual bool hasDisplayCapability(
@@ -144,7 +147,7 @@ public:
     // supported by the HWC can be queried in advance, but allocation may fail for other reasons.
     virtual bool allocateVirtualDisplay(HalVirtualDisplayId, ui::Size, ui::PixelFormat*) = 0;
 
-    virtual void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId,
+    virtual void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId, uint8_t port,
                                          std::optional<ui::Size> physicalSize) = 0;
 
     // Attempts to create a new layer on this display
@@ -236,7 +239,8 @@ public:
     // Returns the stable display ID of the display for which the hotplug event was received, or
     // std::nullopt if hotplug event was ignored.
     // This function is called from SurfaceFlinger.
-    virtual std::optional<DisplayIdentificationInfo> onHotplug(hal::HWDisplayId, HotplugEvent) = 0;
+    virtual std::optional<display::DisplayIdentificationInfo> onHotplug(hal::HWDisplayId,
+                                                                        HotplugEvent) = 0;
 
     // If true we'll update the DeviceProductInfo on subsequent hotplug connected events.
     // TODO(b/157555476): Remove when the framework has proper support for headless mode
@@ -326,8 +330,18 @@ public:
     virtual int32_t getMaxLayerPictureProfiles(PhysicalDisplayId) = 0;
     virtual status_t setDisplayPictureProfileHandle(PhysicalDisplayId,
                                                     const PictureProfileHandle& handle) = 0;
+    virtual status_t startHdcpNegotiation(PhysicalDisplayId,
+                                          const aidl::android::hardware::drm::HdcpLevels&) = 0;
     virtual status_t getLuts(PhysicalDisplayId, const std::vector<sp<GraphicBuffer>>&,
                              std::vector<aidl::android::hardware::graphics::composer3::Luts>*) = 0;
+
+    virtual status_t getReadbackBufferAttributes(
+            PhysicalDisplayId,
+            aidl::android::hardware::graphics::composer3::ReadbackBufferAttributes*
+                    outAttributes) = 0;
+    virtual status_t setReadbackBuffer(PhysicalDisplayId, const sp<GraphicBuffer>& buffer,
+                                       const android::sp<android::Fence>& acquireFence) = 0;
+    virtual sp<Fence> getReadbackBufferFence(PhysicalDisplayId) = 0;
 };
 
 static inline bool operator==(const android::HWComposer::DeviceRequestedChanges& lhs,
@@ -348,8 +362,9 @@ public:
 
     void setCallback(HWC2::ComposerCallback&) override;
 
-    bool getDisplayIdentificationData(hal::HWDisplayId, uint8_t* outPort,
-                                      DisplayIdentificationData* outData) const override;
+    bool getDisplayIdentificationData(
+            hal::HWDisplayId, uint8_t* outPort, display::DisplayIdentificationData* outData,
+            android::ScreenPartStatus* outScreenPartStatus) const override;
 
     bool hasCapability(aidl::android::hardware::graphics::composer3::Capability) const override;
     bool hasDisplayCapability(
@@ -362,7 +377,7 @@ public:
     bool allocateVirtualDisplay(HalVirtualDisplayId, ui::Size, ui::PixelFormat*) override;
 
     // Called from SurfaceFlinger, when the state for a new physical display needs to be recreated.
-    void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId,
+    void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId, uint8_t port,
                                  std::optional<ui::Size> physicalSize) override;
 
     // Attempts to create a new layer on this display
@@ -436,7 +451,8 @@ public:
 
     // Events handling ---------------------------------------------------------
 
-    std::optional<DisplayIdentificationInfo> onHotplug(hal::HWDisplayId, HotplugEvent) override;
+    std::optional<display::DisplayIdentificationInfo> onHotplug(hal::HWDisplayId,
+                                                                HotplugEvent) override;
 
     bool updatesDeviceProductInfoOnHotplugReconnect() const override;
 
@@ -493,8 +509,18 @@ public:
     int32_t getMaxLayerPictureProfiles(PhysicalDisplayId) override;
     status_t setDisplayPictureProfileHandle(PhysicalDisplayId,
                                             const android::PictureProfileHandle& profile) override;
+    status_t startHdcpNegotiation(PhysicalDisplayId,
+                                  const aidl::android::hardware::drm::HdcpLevels&) override;
     status_t getLuts(PhysicalDisplayId, const std::vector<sp<GraphicBuffer>>&,
                      std::vector<aidl::android::hardware::graphics::composer3::Luts>*) override;
+
+    status_t getReadbackBufferAttributes(
+            PhysicalDisplayId,
+            aidl::android::hardware::graphics::composer3::ReadbackBufferAttributes* outAttributes)
+            override;
+    status_t setReadbackBuffer(PhysicalDisplayId, const sp<GraphicBuffer>& buffer,
+                               const android::sp<android::Fence>& acquireFence) override;
+    sp<Fence> getReadbackBufferFence(PhysicalDisplayId) override;
 
     // for debugging ----------------------------------------------------------
     void dump(std::string& out) const override;
@@ -525,6 +551,7 @@ private:
 
     struct DisplayData {
         std::unique_ptr<HWC2::Display> hwcDisplay;
+        std::optional<uint8_t> port; // Set on hotplug for physical displays
 
         sp<Fence> lastPresentFence = Fence::NO_FENCE; // signals when the last set op retires
         nsecs_t lastPresentTimestamp = 0;
@@ -540,9 +567,12 @@ private:
         hal::Vsync vsyncEnabled GUARDED_BY(vsyncEnabledLock) = hal::Vsync::DISABLE;
     };
 
-    std::optional<DisplayIdentificationInfo> onHotplugConnect(hal::HWDisplayId);
-    std::optional<DisplayIdentificationInfo> onHotplugDisconnect(hal::HWDisplayId);
-    bool shouldIgnoreHotplugConnect(hal::HWDisplayId, bool hasDisplayIdentificationData) const;
+    std::optional<display::DisplayIdentificationInfo> onHotplugConnect(hal::HWDisplayId);
+    std::optional<display::DisplayIdentificationInfo> onHotplugDisconnect(hal::HWDisplayId);
+    std::optional<display::DisplayIdentificationInfo> onHotplugLinkTrainingFailure(
+            hal::HWDisplayId);
+    bool shouldIgnoreHotplugConnect(hal::HWDisplayId, uint8_t port,
+                                    bool hasDisplayIdentificationData) const;
 
     aidl::android::hardware::graphics::composer3::DisplayConfiguration::Dpi
     getEstimatedDotsPerInchFromSize(uint64_t hwcDisplayId, const HWCDisplayMode& hwcMode) const;
@@ -554,6 +584,7 @@ private:
     std::vector<HWCDisplayMode> getModesFromDisplayConfigurations(uint64_t hwcDisplayId,
                                                                   int32_t maxFrameIntervalNs) const;
     std::vector<HWCDisplayMode> getModesFromLegacyDisplayConfigs(uint64_t hwcDisplayId) const;
+    ui::DisplayConnectionType getHwcDisplayConnectionType(uint64_t hwcDisplayId) const;
 
     int32_t getAttribute(hal::HWDisplayId hwcDisplayId, hal::HWConfigId configId,
                          hal::Attribute attribute) const;
@@ -562,8 +593,10 @@ private:
     void loadLayerMetadataSupport();
     void loadOverlayProperties();
     void loadHdrConversionCapabilities();
+    bool hasDisplayWithId(PhysicalDisplayId displayId) const;
 
     std::unordered_map<HalDisplayId, DisplayData> mDisplayData;
+    ui::PhysicalDisplaySet<uint8_t> mActivePorts;
 
     std::unique_ptr<android::Hwc2::Composer> mComposer;
     std::unordered_set<aidl::android::hardware::graphics::composer3::Capability> mCapabilities;

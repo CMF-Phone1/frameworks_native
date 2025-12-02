@@ -24,6 +24,7 @@
 #include <gui/Surface.h>
 #include <ui/BufferQueueDefs.h>
 #include <ui/GraphicBuffer.h>
+#include <utils/Errors.h>
 
 #include <unordered_set>
 
@@ -62,14 +63,15 @@ class BufferItemConsumerTest : public ::testing::Test {
     void SetUp() override {
         mBuffers.resize(BufferQueueDefs::NUM_BUFFER_SLOTS);
 
-        mBIC = new BufferItemConsumer(kUsage, kMaxLockedBuffers, true);
+        sp<Surface> surface;
+        std::tie(mBIC, surface) = BufferItemConsumer::create(kUsage, kMaxLockedBuffers, true);
         String8 name("BufferItemConsumer_Under_Test");
         mBIC->setName(name);
         mBFL = new BufferFreedListener(this);
         mBIC->setBufferFreedListener(mBFL);
 
         sp<IProducerListener> producerListener = new TrackingProducerListener(this);
-        mProducer = mBIC->getSurface()->getIGraphicBufferProducer();
+        mProducer = surface->getIGraphicBufferProducer();
         IGraphicBufferProducer::QueueBufferOutput bufferOutput;
         ASSERT_EQ(NO_ERROR,
                   mProducer->connect(producerListener, NATIVE_WINDOW_API_CPU,
@@ -234,7 +236,38 @@ TEST_F(BufferItemConsumerTest, TriggerBufferFreed_DeleteBufferItemConsumer) {
     ASSERT_EQ(1, GetFreedBufferCount());
 }
 
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+TEST_F(BufferItemConsumerTest, ResizeAcquireCount) {
+    EXPECT_EQ(OK, mBIC->setMaxAcquiredBufferCount(kMaxLockedBuffers + 1));
+    EXPECT_EQ(OK, mBIC->setMaxAcquiredBufferCount(kMaxLockedBuffers + 2));
+    EXPECT_EQ(OK, mBIC->setMaxAcquiredBufferCount(kMaxLockedBuffers - 1));
+    EXPECT_EQ(OK, mBIC->setMaxAcquiredBufferCount(kMaxLockedBuffers - 2));
+    EXPECT_EQ(OK, mBIC->setMaxAcquiredBufferCount(kMaxLockedBuffers + 1));
+    EXPECT_EQ(OK, mBIC->setMaxAcquiredBufferCount(kMaxLockedBuffers - 1));
+}
+
+TEST_F(BufferItemConsumerTest, AttachBuffer) {
+    ASSERT_EQ(OK, mBIC->setMaxAcquiredBufferCount(1));
+
+    int slot;
+    DequeueBuffer(&slot);
+    QueueBuffer(slot);
+    AcquireBuffer(&slot);
+
+    sp<GraphicBuffer> newBuffer1 = sp<GraphicBuffer>::make(kWidth, kHeight, kFormat, kUsage);
+    sp<GraphicBuffer> newBuffer2 = sp<GraphicBuffer>::make(kWidth, kHeight, kFormat, kUsage);
+
+    // For some reason, you can attach an extra buffer?
+    // b/400973991 to investigate
+    EXPECT_EQ(OK, mBIC->attachBuffer(newBuffer1));
+    EXPECT_EQ(INVALID_OPERATION, mBIC->attachBuffer(newBuffer2));
+
+    ReleaseBuffer(slot);
+
+    EXPECT_EQ(OK, mBIC->attachBuffer(newBuffer2));
+    EXPECT_EQ(OK, mBIC->releaseBuffer(newBuffer1, Fence::NO_FENCE));
+    EXPECT_EQ(OK, mBIC->releaseBuffer(newBuffer2, Fence::NO_FENCE));
+}
+
 // Test that delete BufferItemConsumer triggers onBufferFreed.
 TEST_F(BufferItemConsumerTest, DetachBufferWithBuffer) {
     int slot;
@@ -247,7 +280,6 @@ TEST_F(BufferItemConsumerTest, DetachBufferWithBuffer) {
     EXPECT_EQ(OK, mBIC->detachBuffer(buffer));
     EXPECT_THAT(mDetachedBufferSlots, testing::ElementsAre(slot));
 }
-#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
 TEST_F(BufferItemConsumerTest, UnlimitedSlots_AcquireReleaseAll) {

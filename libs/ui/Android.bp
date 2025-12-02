@@ -122,8 +122,8 @@ cc_library_shared {
 
     srcs: [
         "DebugUtils.cpp",
+        "DependencyMonitor.cpp",
         "DeviceProductInfo.cpp",
-        "DisplayIdentification.cpp",
         "DynamicDisplayInfo.cpp",
         "Fence.cpp",
         "FenceTime.cpp",

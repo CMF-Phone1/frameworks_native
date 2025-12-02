@@ -66,7 +66,7 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithIdentificationData) {
     PrimaryDisplay::setupHwcGetActiveConfigCallExpectations(this);
     PrimaryDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
 
-    // TODO(b/241286146): Remove this unnecessary call.
+    // TODO: b/241286146 - Remove this unnecessary call.
     EXPECT_CALL(*mComposer,
                 setVsyncEnabled(PrimaryDisplay::HWC_DISPLAY_ID, IComposerClient::Vsync::DISABLE))
             .WillOnce(Return(Error::NONE));
@@ -77,12 +77,12 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithIdentificationData) {
     mFlinger.configure();
 
     // Configure an external display with identification info.
-    using ExternalDisplay = ExternalDisplayWithIdentificationVariant;
+    using ExternalDisplay = ExternalDisplayWithIdentificationVariant<>;
     ExternalDisplay::setupHwcHotplugCallExpectations(this);
     ExternalDisplay::setupHwcGetActiveConfigCallExpectations(this);
     ExternalDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
 
-    // TODO(b/241286146): Remove this unnecessary call.
+    // TODO: b/241286146 - Remove this unnecessary call.
     EXPECT_CALL(*mComposer,
                 setVsyncEnabled(ExternalDisplay::HWC_DISPLAY_ID, IComposerClient::Vsync::DISABLE))
             .WillOnce(Return(Error::NONE));
@@ -90,7 +90,9 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithIdentificationData) {
     mFlinger.configure();
 
     EXPECT_TRUE(hasPhysicalHwcDisplay(PrimaryDisplay::HWC_DISPLAY_ID));
-    EXPECT_TRUE(mFlinger.getHwComposer().isConnected(PrimaryDisplay::DISPLAY_ID::get()));
+    const auto primaryDisplayId = asPhysicalDisplayId(PrimaryDisplay::DISPLAY_ID::get());
+    ASSERT_TRUE(primaryDisplayId);
+    EXPECT_TRUE(mFlinger.getHwComposer().isConnected(*primaryDisplayId));
     const auto primaryDisplayIdOpt =
             mFlinger.getHwComposer().toPhysicalDisplayId(PrimaryDisplay::HWC_DISPLAY_ID);
     ASSERT_TRUE(primaryDisplayIdOpt.has_value());
@@ -98,13 +100,15 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithIdentificationData) {
             mFlinger.physicalDisplays().get(primaryDisplayIdOpt.value());
     ASSERT_TRUE(primaryPhysicalDisplayOpt.has_value());
     const auto primaryDisplaySnapshotRef = primaryPhysicalDisplayOpt->get().snapshotRef();
-    EXPECT_EQ(PrimaryDisplay::DISPLAY_ID::get(), primaryDisplaySnapshotRef.get().displayId());
+    EXPECT_EQ(*primaryDisplayId, primaryDisplaySnapshotRef.get().displayId());
     EXPECT_EQ(PrimaryDisplay::PORT::value, primaryDisplaySnapshotRef.get().port());
     EXPECT_EQ(PrimaryDisplay::CONNECTION_TYPE::value,
               primaryDisplaySnapshotRef.get().connectionType());
 
     EXPECT_TRUE(hasPhysicalHwcDisplay(ExternalDisplay::HWC_DISPLAY_ID));
-    EXPECT_TRUE(mFlinger.getHwComposer().isConnected(ExternalDisplay::DISPLAY_ID::get()));
+    const auto externalDisplayId = asPhysicalDisplayId(ExternalDisplay::DISPLAY_ID::get());
+    ASSERT_TRUE(externalDisplayId);
+    EXPECT_TRUE(mFlinger.getHwComposer().isConnected(*externalDisplayId));
     const auto externalDisplayIdOpt =
             mFlinger.getHwComposer().toPhysicalDisplayId(ExternalDisplay::HWC_DISPLAY_ID);
     ASSERT_TRUE(externalDisplayIdOpt.has_value());
@@ -112,10 +116,32 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithIdentificationData) {
             mFlinger.physicalDisplays().get(externalDisplayIdOpt.value());
     ASSERT_TRUE(externalPhysicalDisplayOpt.has_value());
     const auto externalDisplaySnapshotRef = externalPhysicalDisplayOpt->get().snapshotRef();
-    EXPECT_EQ(ExternalDisplay::DISPLAY_ID::get(), externalDisplaySnapshotRef.get().displayId());
+    EXPECT_EQ(*externalDisplayId, externalDisplaySnapshotRef.get().displayId());
     EXPECT_EQ(ExternalDisplay::PORT::value, externalDisplaySnapshotRef.get().port());
     EXPECT_EQ(ExternalDisplay::CONNECTION_TYPE::value,
               externalDisplaySnapshotRef.get().connectionType());
+
+    // Finally, ensure that the correct ID scheme is assigned according to the connection type:
+    // port-based IDs for internal panels, and EDID-based IDs for external displays.
+    const auto primaryDisplayInfo =
+            display::parseDisplayIdentificationData(PrimaryDisplay::PORT::value.value(),
+                                                    getInternalEdid(),
+                                                    android::ScreenPartStatus::UNSUPPORTED,
+                                                    /*useStableEdidIds=*/false);
+    ASSERT_TRUE(primaryDisplayInfo);
+    EXPECT_EQ(primaryDisplayInfo->id, primaryDisplaySnapshotRef.get().displayId());
+
+    const bool useStableEdidIds = FlagManager::getInstance().stable_edid_ids() &&
+            ExternalDisplay::CONNECTION_TYPE::value == ui::DisplayConnectionType::External;
+    const auto externalDisplayInfo =
+            display::parseDisplayIdentificationData(ExternalDisplay::PORT::value.value(),
+                                                    getExternalEdid(),
+                                                    android::ScreenPartStatus::UNSUPPORTED,
+                                                    useStableEdidIds);
+    ASSERT_TRUE(externalDisplayInfo);
+    EXPECT_EQ(externalDisplayInfo->id, externalDisplaySnapshotRef.get().displayId());
+    EXPECT_NE(primaryDisplaySnapshotRef.get().displayId(),
+              externalDisplaySnapshotRef.get().displayId());
 }
 
 TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithoutIdentificationData) {
@@ -125,7 +151,7 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithoutIdentificationData)
     PrimaryDisplay::setupHwcGetActiveConfigCallExpectations(this);
     PrimaryDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
 
-    // TODO(b/241286146): Remove this unnecessary call.
+    // TODO: b/241286146 - Remove this unnecessary call.
     EXPECT_CALL(*mComposer,
                 setVsyncEnabled(PrimaryDisplay::HWC_DISPLAY_ID, IComposerClient::Vsync::DISABLE))
             .WillOnce(Return(Error::NONE));
@@ -136,12 +162,12 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithoutIdentificationData)
     mFlinger.configure();
 
     // Configure an external display with identification info.
-    using ExternalDisplay = ExternalDisplayWithIdentificationVariant;
+    using ExternalDisplay = ExternalDisplayWithIdentificationVariant<>;
     ExternalDisplay::setupHwcHotplugCallExpectations(this);
     ExternalDisplay::setupHwcGetActiveConfigCallExpectations(this);
     ExternalDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
 
-    // TODO(b/241286146): Remove this unnecessary call.
+    // TODO: b/241286146 - Remove this unnecessary call.
     EXPECT_CALL(*mComposer,
                 setVsyncEnabled(ExternalDisplay::HWC_DISPLAY_ID, IComposerClient::Vsync::DISABLE))
             .WillOnce(Return(Error::NONE));
@@ -154,8 +180,8 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithoutIdentificationData)
     constexpr PhysicalDisplayId primaryInternalDisplayId =
             PhysicalDisplayId::fromPort(primaryInternalDisplayPort);
     EXPECT_TRUE(hasPhysicalHwcDisplay(PrimaryDisplay::HWC_DISPLAY_ID));
-    ASSERT_EQ(primaryInternalDisplayId, PrimaryDisplay::DISPLAY_ID::get());
-    EXPECT_TRUE(mFlinger.getHwComposer().isConnected(PrimaryDisplay::DISPLAY_ID::get()));
+    ASSERT_EQ(primaryInternalDisplayId, asPhysicalDisplayId(PrimaryDisplay::DISPLAY_ID::get()));
+    EXPECT_TRUE(mFlinger.getHwComposer().isConnected(primaryInternalDisplayId));
     const auto primaryDisplayIdOpt =
             mFlinger.getHwComposer().toPhysicalDisplayId(PrimaryDisplay::HWC_DISPLAY_ID);
     ASSERT_TRUE(primaryDisplayIdOpt.has_value());
@@ -198,7 +224,7 @@ TEST_F(HotplugTest, ignoresDuplicateDisconnection) {
     ExternalDisplay::setupHwcHotplugCallExpectations(this);
     ExternalDisplay::setupHwcGetActiveConfigCallExpectations(this);
 
-    // TODO(b/241286146): Remove this unnecessary call.
+    // TODO: b/241286146 - Remove this unnecessary call.
     EXPECT_CALL(*mComposer,
                 setVsyncEnabled(ExternalDisplay::HWC_DISPLAY_ID, IComposerClient::Vsync::DISABLE))
             .WillOnce(Return(Error::NONE));
@@ -220,12 +246,12 @@ TEST_F(HotplugTest, ignoresDuplicateDisconnection) {
     // The display should be scheduled for removal during the next commit. At this point, it should
     // still exist but be marked as disconnected.
     EXPECT_TRUE(hasPhysicalHwcDisplay(ExternalDisplay::HWC_DISPLAY_ID));
-    EXPECT_FALSE(mFlinger.getHwComposer().isConnected(ExternalDisplay::DISPLAY_ID::get()));
+    const auto externalDisplayId = asPhysicalDisplayId(ExternalDisplay::DISPLAY_ID::get());
+    ASSERT_TRUE(externalDisplayId);
+    EXPECT_FALSE(mFlinger.getHwComposer().isConnected(*externalDisplayId));
 }
 
 TEST_F(HotplugTest, rejectsHotplugIfFailedToLoadDisplayModes) {
-    SET_FLAG_FOR_TEST(flags::connected_display, true);
-
     // Inject a primary display.
     PrimaryDisplayVariant::injectHwcDisplay(this);
 
@@ -242,7 +268,7 @@ TEST_F(HotplugTest, rejectsHotplugIfFailedToLoadDisplayModes) {
     EXPECT_CALL(*mComposer, getActiveConfig(ExternalDisplay::HWC_DISPLAY_ID, _))
             .WillRepeatedly(Return(Error::BAD_DISPLAY));
 
-    // TODO(b/241286146): Remove this unnecessary call.
+    // TODO: b/241286146 - Remove this unnecessary call.
     EXPECT_CALL(*mComposer,
                 setVsyncEnabled(ExternalDisplay::HWC_DISPLAY_ID, IComposerClient::Vsync::DISABLE))
             .WillOnce(Return(Error::NONE));
@@ -260,6 +286,56 @@ TEST_F(HotplugTest, rejectsHotplugIfFailedToLoadDisplayModes) {
     mFlinger.configure();
 
     EXPECT_FALSE(hasPhysicalHwcDisplay(ExternalDisplay::HWC_DISPLAY_ID));
+}
+
+TEST_F(HotplugTest, rejectsHotplugOnActivePortsDuplicate) {
+    // Inject a primary display.
+    PrimaryDisplayVariant::injectHwcDisplay(this);
+
+    // Second display should come up properly.
+    using SecondDisplay = ExternalDisplayWithIdentificationVariant<>;
+    SecondDisplay::setupHwcHotplugCallExpectations(this);
+    SecondDisplay::setupHwcGetActiveConfigCallExpectations(this);
+
+    // TODO: b/241286146 - Remove this unnecessary call.
+    EXPECT_CALL(*mComposer,
+                setVsyncEnabled(SecondDisplay::HWC_DISPLAY_ID, IComposerClient::Vsync::DISABLE))
+            .WillOnce(Return(Error::NONE));
+
+    EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame(_)).Times(1);
+
+    SecondDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
+    mFlinger.configure();
+
+    EXPECT_TRUE(hasPhysicalHwcDisplay(SecondDisplay::HWC_DISPLAY_ID));
+
+    // Third display will return the same port ID as the second, and the hotplug
+    // should fail.
+    constexpr HWDisplayId kHwDisplayId = 1234;
+    using DuplicatePortDisplay = ExternalDisplayWithIdentificationVariant<kHwDisplayId>;
+
+    // We expect display identification to be fetched correctly, since EDID and
+    // port are available and successfully retrieved from HAL.
+    EXPECT_CALL(*mComposer, getDisplayConnectionType(DuplicatePortDisplay::HWC_DISPLAY_ID, _))
+            .WillOnce(DoAll(SetArgPointee<1>(IComposerClient::DisplayConnectionType::EXTERNAL),
+                            Return(hal::V2_4::Error::NONE)));
+    EXPECT_CALL(*mComposer,
+                getDisplayIdentificationData(DuplicatePortDisplay::HWC_DISPLAY_ID, _, _, _))
+            .WillOnce(DoAll(SetArgPointee<1>(*DuplicatePortDisplay::PORT::value),
+                            SetArgPointee<2>(getExternalEedid()), Return(Error::NONE)));
+
+    DuplicatePortDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
+    mFlinger.configure();
+
+    // The hotplug should be rejected due to an attempt to connect a display to an already active
+    // port. No HWComposer::DisplayData should be created.
+    EXPECT_FALSE(hasPhysicalHwcDisplay(DuplicatePortDisplay::HWC_DISPLAY_ID));
+
+    // Disconnecting a display that was not successfully configured should be a no-op.
+    DuplicatePortDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Disconnected);
+    mFlinger.configure();
+
+    EXPECT_FALSE(hasPhysicalHwcDisplay(DuplicatePortDisplay::HWC_DISPLAY_ID));
 }
 
 } // namespace android

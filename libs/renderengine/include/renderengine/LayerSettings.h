@@ -16,6 +16,10 @@
 
 #pragma once
 
+#include <android/gui/BorderSettings.h>
+#include <android/gui/BoxShadowSettings.h>
+#include <com_android_graphics_surfaceflinger_flags.h>
+#include <gui/CornerRadii.h>
 #include <gui/DisplayLuts.h>
 #include <math/mat4.h>
 #include <math/vec3.h>
@@ -71,6 +75,10 @@ struct Geometry {
     // Boundaries of the layer.
     FloatRect boundaries = FloatRect();
 
+    // Boundaries of the layer before transparent region hint is subtracted.
+    // Effects like shadows and outline ignore the transparent region hint.
+    FloatRect originalBounds = FloatRect();
+
     // Transform matrix to apply to mesh coordinates.
     mat4 positionTransform = mat4();
 
@@ -83,10 +91,15 @@ struct Geometry {
     // rectangle to figure out how to apply the radius for this layer. The crop rectangle will be
     // in local layer coordinate space, so we have to take the layer transform into account when
     // walking up the tree.
-    vec2 roundedCornersRadius = vec2(0.0f, 0.0f);
+    gui::CornerRadii roundedCornersRadii = {};
 
     // Rectangle within which corners will be rounded.
     FloatRect roundedCornersCrop = FloatRect();
+
+    // Crop geometry in local space, used for cropping outset rendering, e.g. shadows.
+    gui::CornerRadii otherRoundedCornersRadii = {};
+
+    FloatRect otherCrop = FloatRect();
 };
 
 // Descriptor of the source pixels for this layer.
@@ -127,7 +140,12 @@ struct LayerSettings {
 
     ShadowSettings shadow;
 
+    gui::BorderSettings borderSettings;
+
+    gui::BoxShadowSettings boxShadowSettings;
+
     int backgroundBlurRadius = 0;
+    float backgroundBlurScale = 1.0f;
 
     std::vector<BlurRegion> blurRegions;
 
@@ -162,7 +180,7 @@ static inline bool operator==(const Buffer& lhs, const Buffer& rhs) {
 
 static inline bool operator==(const Geometry& lhs, const Geometry& rhs) {
     return lhs.boundaries == rhs.boundaries && lhs.positionTransform == rhs.positionTransform &&
-            lhs.roundedCornersRadius == rhs.roundedCornersRadius &&
+            lhs.roundedCornersRadii == rhs.roundedCornersRadii &&
             lhs.roundedCornersCrop == rhs.roundedCornersCrop;
 }
 
@@ -187,6 +205,7 @@ static inline bool operator==(const LayerSettings& lhs, const LayerSettings& rhs
             lhs.disableBlending == rhs.disableBlending &&
             lhs.skipContentDraw == rhs.skipContentDraw && lhs.shadow == rhs.shadow &&
             lhs.backgroundBlurRadius == rhs.backgroundBlurRadius &&
+            lhs.backgroundBlurScale == rhs.backgroundBlurScale &&
             lhs.blurRegionTransform == rhs.blurRegionTransform &&
             lhs.stretchEffect == rhs.stretchEffect &&
             lhs.edgeExtensionEffect == rhs.edgeExtensionEffect &&
@@ -212,12 +231,17 @@ static inline void PrintTo(const Geometry& settings, ::std::ostream* os) {
     *os << "Geometry {";
     *os << "\n    .boundaries = ";
     PrintTo(settings.boundaries, os);
+    *os << "\n    .originalBounds = ";
+    PrintTo(settings.originalBounds, os);
     *os << "\n    .positionTransform = ";
     PrintMatrix(settings.positionTransform, os);
-    *os << "\n    .roundedCornersRadiusX = " << settings.roundedCornersRadius.x;
-    *os << "\n    .roundedCornersRadiusY = " << settings.roundedCornersRadius.y;
+    *os << "\n    .roundedCornersRadii = " << settings.roundedCornersRadii;
     *os << "\n    .roundedCornersCrop = ";
     PrintTo(settings.roundedCornersCrop, os);
+    *os << "\n    .otherRoundedCornersRadii = " << settings.otherRoundedCornersRadii;
+    *os << "\n    .otherCrop = ";
+    PrintTo(settings.otherCrop, os);
+
     *os << "\n}";
 }
 
@@ -283,6 +307,7 @@ static inline void PrintTo(const LayerSettings& settings, ::std::ostream* os) {
         PrintTo(settings.shadow, os);
     }
     *os << "\n    .backgroundBlurRadius = " << settings.backgroundBlurRadius;
+    *os << "\n    .backgroundBlurScale = " << settings.backgroundBlurScale;
     if (settings.blurRegions.size()) {
         *os << "\n    .blurRegions =";
         for (auto blurRegion : settings.blurRegions) {
@@ -301,6 +326,14 @@ static inline void PrintTo(const LayerSettings& settings, ::std::ostream* os) {
         *os << "\n    .edgeExtensionEffect = " << settings.edgeExtensionEffect;
     }
     *os << "\n    .whitePointNits = " << settings.whitePointNits;
+    if (settings.luts) {
+        *os << "\n    .luts = ";
+        PrintTo(settings.luts, os);
+    }
+
+    *os << "\n    .borderSettings = " << settings.borderSettings.toString();
+    *os << "\n    .boxShadowSettings = " << settings.boxShadowSettings.toString();
+
     *os << "\n}";
 }
 

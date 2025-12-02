@@ -45,12 +45,21 @@ public:
         return args;
     }
 
-    static LayerCreationArgs createDisplayMirrorArgs(uint32_t id,
-                                                     ui::LayerStack layerStackToMirror) {
+    static LayerCreationArgs createDisplayMirrorArgs(uint32_t id, ui::LayerStack layerStackToMirror,
+                                                     uint32_t stopLayerId = UNASSIGNED_LAYER_ID) {
         LayerCreationArgs args(std::make_optional(id));
         args.name = "testlayer";
         args.addToRoot = true;
         args.layerStackToMirror = layerStackToMirror;
+        args.stopLayerId = stopLayerId;
+        return args;
+    }
+
+    static LayerCreationArgs createLayerMirrorArgs(uint32_t id, uint32_t layerIdToMirror) {
+        LayerCreationArgs args(std::make_optional(id));
+        args.name = "testlayer";
+        args.addToRoot = true;
+        args.layerIdToMirror = layerIdToMirror;
         return args;
     }
 
@@ -94,10 +103,18 @@ public:
         mLifecycleManager.addLayers(std::move(layers));
     }
 
-    void createDisplayMirrorLayer(uint32_t id, ui::LayerStack layerStack) {
+    void createDisplayMirrorLayer(uint32_t id, ui::LayerStack layerStack,
+                                  uint32_t stopLayerId = UNASSIGNED_LAYER_ID) {
         std::vector<std::unique_ptr<RequestedLayerState>> layers;
         layers.emplace_back(std::make_unique<RequestedLayerState>(
-                createDisplayMirrorArgs(/*id=*/id, layerStack)));
+                createDisplayMirrorArgs(/*id=*/id, layerStack, stopLayerId)));
+        mLifecycleManager.addLayers(std::move(layers));
+    }
+
+    void createLayerMirrorLayer(uint32_t id, uint32_t idToMirror) {
+        std::vector<std::unique_ptr<RequestedLayerState>> layers;
+        layers.emplace_back(
+                std::make_unique<RequestedLayerState>(createLayerMirrorArgs(id, idToMirror)));
         mLifecycleManager.addLayers(std::move(layers));
     }
 
@@ -265,9 +282,8 @@ public:
 
         transactions.back().states.front().state.what = layer_state_t::eInputInfoChanged;
         transactions.back().states.front().layerId = id;
-        transactions.back().states.front().state.windowInfoHandle =
-                sp<gui::WindowInfoHandle>::make();
-        auto inputInfo = transactions.back().states.front().state.windowInfoHandle->editInfo();
+        auto inputInfo = transactions.back().states.front().state.editWindowInfo();
+        *inputInfo = {};
         inputInfo->touchableRegion = region;
         inputInfo->token = sp<BBinder>::make();
         mLifecycleManager.applyTransactions(transactions);
@@ -280,9 +296,8 @@ public:
 
         transactions.back().states.front().state.what = layer_state_t::eInputInfoChanged;
         transactions.back().states.front().layerId = id;
-        transactions.back().states.front().state.windowInfoHandle =
-                sp<gui::WindowInfoHandle>::make();
-        auto inputInfo = transactions.back().states.front().state.windowInfoHandle->editInfo();
+        auto inputInfo = transactions.back().states.front().state.editWindowInfo();
+        *inputInfo = {};
         if (!inputInfo->token) {
             inputInfo->token = sp<BBinder>::make();
         }
@@ -299,9 +314,8 @@ public:
 
         transactions.back().states.front().state.what = layer_state_t::eInputInfoChanged;
         transactions.back().states.front().layerId = id;
-        transactions.back().states.front().state.windowInfoHandle =
-                sp<gui::WindowInfoHandle>::make();
-        auto inputInfo = transactions.back().states.front().state.windowInfoHandle->editInfo();
+        auto inputInfo = transactions.back().states.front().state.editWindowInfo();
+        *inputInfo = {};
         inputInfo->touchableRegion = region;
         inputInfo->replaceTouchableRegionWithCrop = replaceTouchableRegionWithCrop;
         transactions.back().states.front().touchCropId = touchCropId;
@@ -318,6 +332,17 @@ public:
         transactions.back().states.front().state.what = layer_state_t::eBackgroundBlurRadiusChanged;
         transactions.back().states.front().layerId = id;
         transactions.back().states.front().state.backgroundBlurRadius = backgroundBlurRadius;
+        mLifecycleManager.applyTransactions(transactions);
+    }
+
+    void setBackgroundBlurScale(uint32_t id, float backgroundBlurScale) {
+        std::vector<QueuedTransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.push_back({});
+
+        transactions.back().states.front().state.what = layer_state_t::eBackgroundBlurScaleChanged;
+        transactions.back().states.front().layerId = id;
+        transactions.back().states.front().state.backgroundBlurScale = backgroundBlurScale;
         mLifecycleManager.applyTransactions(transactions);
     }
 
@@ -402,7 +427,20 @@ public:
 
         transactions.back().states.front().state.what = layer_state_t::eCornerRadiusChanged;
         transactions.back().states.front().layerId = id;
-        transactions.back().states.front().state.cornerRadius = radius;
+        android::gui::CornerRadii radii(radius);
+        transactions.back().states.front().state.cornerRadii = radii;
+        mLifecycleManager.applyTransactions(transactions);
+    }
+
+    void setRoundedCorners(uint32_t id, float tl, float tr, float bl, float br) {
+        std::vector<QueuedTransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.push_back({});
+
+        transactions.back().states.front().state.what = layer_state_t::eCornerRadiusChanged;
+        transactions.back().states.front().layerId = id;
+        android::gui::CornerRadii radii(tl, tr, bl, br);
+        transactions.back().states.front().state.cornerRadii = radii;
         mLifecycleManager.applyTransactions(transactions);
     }
 
@@ -455,9 +493,8 @@ public:
         transactions.emplace_back();
         transactions.back().states.push_back({});
 
-        transactions.back().states.front().state.what = layer_state_t::eSurfaceDamageRegionChanged;
         transactions.back().states.front().layerId = id;
-        transactions.back().states.front().state.surfaceDamageRegion = damageRegion;
+        transactions.back().states.front().state.updateSurfaceDamageRegion(damageRegion);
         mLifecycleManager.applyTransactions(transactions);
     }
 
@@ -485,7 +522,8 @@ public:
         mLifecycleManager.applyTransactions(transactions);
     }
 
-    void setClientDrawnCornerRadius(uint32_t id, float clientDrawnCornerRadius) {
+    void setClientDrawnCornerRadius(uint32_t id, float clientDrawnCornerRadius,
+                                    const FloatRect& crop) {
         std::vector<QueuedTransactionState> transactions;
         transactions.emplace_back();
         transactions.back().states.push_back({});
@@ -493,18 +531,24 @@ public:
         transactions.back().states.front().state.what =
                 layer_state_t::eClientDrawnCornerRadiusChanged;
         transactions.back().states.front().layerId = id;
-        transactions.back().states.front().state.clientDrawnCornerRadius = clientDrawnCornerRadius;
+        android::gui::CornerRadii radii(clientDrawnCornerRadius);
+        transactions.back().states.front().state.clientDrawnCornerRadii = radii;
+        transactions.back().states.front().state.clientDrawnCornerRadiusCrop = crop;
         mLifecycleManager.applyTransactions(transactions);
     }
 
-    void setClientDrawnShadowRadius(uint32_t id, float clientDrawnShadowRadius) {
+    void setClientDrawnCornerRadius(uint32_t id, float tl, float tr, float bl, float br,
+                                    const FloatRect& crop) {
         std::vector<QueuedTransactionState> transactions;
         transactions.emplace_back();
         transactions.back().states.push_back({});
 
-        transactions.back().states.front().state.what = layer_state_t::eClientDrawnShadowsChanged;
+        transactions.back().states.front().state.what =
+                layer_state_t::eClientDrawnCornerRadiusChanged;
         transactions.back().states.front().layerId = id;
-        transactions.back().states.front().state.clientDrawnShadowRadius = clientDrawnShadowRadius;
+        android::gui::CornerRadii radii(tl, tr, bl, br);
+        transactions.back().states.front().state.clientDrawnCornerRadii = radii;
+        transactions.back().states.front().state.clientDrawnCornerRadiusCrop = crop;
         mLifecycleManager.applyTransactions(transactions);
     }
 
@@ -516,6 +560,28 @@ public:
         transactions.back().states.front().state.what = layer_state_t::eShadowRadiusChanged;
         transactions.back().states.front().layerId = id;
         transactions.back().states.front().state.shadowRadius = shadowRadius;
+        mLifecycleManager.applyTransactions(transactions);
+    }
+
+    void setBorderSettings(uint32_t id, gui::BorderSettings settings) {
+        std::vector<QueuedTransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.push_back({});
+
+        transactions.back().states.front().state.what = layer_state_t::eBorderSettingsChanged;
+        transactions.back().states.front().layerId = id;
+        transactions.back().states.front().state.borderSettings = settings;
+        mLifecycleManager.applyTransactions(transactions);
+    }
+
+    void setBoxShadowSettings(uint32_t id, gui::BoxShadowSettings settings) {
+        std::vector<QueuedTransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.push_back({});
+
+        transactions.back().states.front().state.what = layer_state_t::eBoxShadowSettingsChanged;
+        transactions.back().states.front().layerId = id;
+        transactions.back().states.front().state.boxShadowSettings = settings;
         mLifecycleManager.applyTransactions(transactions);
     }
 
@@ -567,6 +633,29 @@ public:
         transactions.back().states.front().state.edgeExtensionParameters.extendTop = edge & TOP;
         transactions.back().states.front().state.edgeExtensionParameters.extendBottom =
                 edge & BOTTOM;
+        mLifecycleManager.applyTransactions(transactions);
+    }
+
+    void setStopLayer(uint32_t id, uint32_t stopLayerId) {
+        std::vector<QueuedTransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.emplace_back();
+        transactions.back().states.back().layerId = id;
+        transactions.back().states.back().state.what = layer_state_t::eStopLayerChanged;
+        transactions.back().states.back().stopLayerId = stopLayerId;
+        mLifecycleManager.applyTransactions(transactions);
+    }
+
+    void setSystemContentPriority(uint32_t id, int32_t priority) {
+        std::vector<QueuedTransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.push_back({});
+
+        transactions.back().states.front().state.what =
+                layer_state_t::eSystemContentPriorityChanged;
+        transactions.back().states.front().layerId = id;
+        transactions.back().states.front().state.systemContentPriority = priority;
+
         mLifecycleManager.applyTransactions(transactions);
     }
 

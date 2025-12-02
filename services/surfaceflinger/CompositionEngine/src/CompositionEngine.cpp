@@ -91,13 +91,13 @@ nsecs_t CompositionEngine::getLastFrameRefreshTimestamp() const {
 
 namespace {
 void offloadOutputs(Outputs& outputs) {
-    if (!FlagManager::getInstance().multithreaded_present() || outputs.size() < 2) {
+    if (outputs.size() < 2) {
         return;
     }
 
     ui::PhysicalDisplayVector<compositionengine::Output*> outputsToOffload;
     for (const auto& output : outputs) {
-        if (!ftl::Optional(output->getDisplayId()).and_then(HalDisplayId::tryCast)) {
+        if (!output->getDisplayIdVariant().and_then(asHalDisplayId<DisplayIdVariant>)) {
             // Not HWC-enabled, so it is always client-composited. No need to offload.
             continue;
         }
@@ -195,16 +195,22 @@ void CompositionEngine::preComposition(CompositionRefreshArgs& args) {
 
 // If a buffer is latched but the layer is not presented, such as when
 // obscured by another layer, the previous buffer needs to be released. We find
-// these buffers and fire a NO_FENCE to release it. This ensures that all
-// promises for buffer releases are fulfilled at the end of composition.
+// these buffers and fire a NO_FENCE, or the last client composition acquire fence to release it.
+// This ensures that all promises for buffer releases are fulfilled at the end of composition.
 void CompositionEngine::postComposition(CompositionRefreshArgs& args) {
     SFTRACE_CALL();
     ALOGV(__FUNCTION__);
 
+    const bool force_slower_follower_gpu_composition =
+            FlagManager::getInstance().force_slower_follower_gpu_composition();
     for (auto& layerFE : args.layers) {
         if (layerFE->getReleaseFencePromiseStatus() ==
             LayerFE::ReleaseFencePromiseStatus::INITIALIZED) {
-            layerFE->setReleaseFence(Fence::NO_FENCE);
+            if (force_slower_follower_gpu_composition) {
+                layerFE->setReleaseFence(layerFE->getAndClearLastClientTargetAcquireFence());
+            } else {
+                layerFE->setReleaseFence(Fence::NO_FENCE);
+            }
         }
     }
 
@@ -214,7 +220,11 @@ void CompositionEngine::postComposition(CompositionRefreshArgs& args) {
     for (auto& layerFE : args.layersWithQueuedFrames) {
         if (layerFE->getReleaseFencePromiseStatus() ==
             LayerFE::ReleaseFencePromiseStatus::INITIALIZED) {
-            layerFE->setReleaseFence(Fence::NO_FENCE);
+            if (force_slower_follower_gpu_composition) {
+                layerFE->setReleaseFence(layerFE->getAndClearLastClientTargetAcquireFence());
+            } else {
+                layerFE->setReleaseFence(Fence::NO_FENCE);
+            }
         }
     }
 }

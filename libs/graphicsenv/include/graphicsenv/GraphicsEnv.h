@@ -121,10 +121,13 @@ public:
     // Get the app package name.
     std::string& getPackageName();
     const std::vector<std::string>& getAngleEglFeatures();
+    void updateAngleFeatureOverrides();
     void getAngleFeatureOverrides(std::vector<const char*>& enabled,
                                   std::vector<const char*>& disabled);
     // Set the persist.graphics.egl system property value.
     void nativeToggleAngleAsSystemDriver(bool enabled);
+    // Get the persist.graphics.egl system property value.
+    std::string nativeGetPersistGraphicsEgl();
     bool shouldUseSystemAngle();
     bool shouldUseNativeDriver();
 

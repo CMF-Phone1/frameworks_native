@@ -18,6 +18,7 @@
 
 #include <gmock/gmock.h>
 
+#include "Display/DisplayIdentification.h"
 #include "DisplayHardware/HWComposer.h"
 
 namespace android::mock {
@@ -32,7 +33,9 @@ public:
 
     MOCK_METHOD(void, setCallback, (HWC2::ComposerCallback&), (override));
     MOCK_METHOD(bool, getDisplayIdentificationData,
-                (HWDisplayId, uint8_t*, DisplayIdentificationData*), (const, override));
+                (HWDisplayId, uint8_t*, display::DisplayIdentificationData*,
+                 android::ScreenPartStatus*),
+                (const, override));
     MOCK_METHOD(bool, hasCapability, (aidl::android::hardware::graphics::composer3::Capability),
                 (const, override));
     MOCK_METHOD(bool, hasDisplayCapability,
@@ -44,7 +47,8 @@ public:
     MOCK_METHOD(bool, allocateVirtualDisplay, (HalVirtualDisplayId, ui::Size, ui::PixelFormat*),
                 (override));
     MOCK_METHOD(void, allocatePhysicalDisplay,
-                (hal::HWDisplayId, PhysicalDisplayId, std::optional<ui::Size>), (override));
+                (hal::HWDisplayId, PhysicalDisplayId, uint8_t port, std::optional<ui::Size>),
+                (override));
 
     MOCK_METHOD(std::shared_ptr<HWC2::Layer>, createLayer, (HalDisplayId), (override));
     MOCK_METHOD(status_t, getDeviceCompositionChanges,
@@ -80,7 +84,7 @@ public:
     MOCK_METHOD(ftl::Future<status_t>, setDisplayBrightness,
                 (PhysicalDisplayId, float, float, const Hwc2::Composer::DisplayBrightnessOptions&),
                 (override));
-    MOCK_METHOD(std::optional<DisplayIdentificationInfo>, onHotplug,
+    MOCK_METHOD(std::optional<display::DisplayIdentificationInfo>, onHotplug,
                 (hal::HWDisplayId, HWComposer::HotplugEvent), (override));
     MOCK_METHOD(bool, updatesDeviceProductInfoOnHotplugReconnect, (), (const, override));
     MOCK_METHOD(std::optional<PhysicalDisplayId>, onVsync, (hal::HWDisplayId, int64_t));
@@ -151,9 +155,18 @@ public:
     MOCK_METHOD(int32_t, getMaxLayerPictureProfiles, (PhysicalDisplayId));
     MOCK_METHOD(status_t, setDisplayPictureProfileHandle,
                 (PhysicalDisplayId, const PictureProfileHandle&));
+    MOCK_METHOD(status_t, startHdcpNegotiation,
+                (PhysicalDisplayId, const aidl::android::hardware::drm::HdcpLevels&));
     MOCK_METHOD(status_t, getLuts,
                 (PhysicalDisplayId, const std::vector<sp<GraphicBuffer>>&,
                  std::vector<aidl::android::hardware::graphics::composer3::Luts>*));
+
+    MOCK_METHOD(status_t, getReadbackBufferAttributes,
+                (PhysicalDisplayId,
+                 aidl::android::hardware::graphics::composer3::ReadbackBufferAttributes*));
+    MOCK_METHOD(status_t, setReadbackBuffer,
+                (PhysicalDisplayId, const sp<GraphicBuffer>&, const android::sp<android::Fence>&));
+    MOCK_METHOD(sp<Fence>, getReadbackBufferFence, (PhysicalDisplayId));
 };
 
 } // namespace android::mock

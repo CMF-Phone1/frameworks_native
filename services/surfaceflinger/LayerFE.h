@@ -18,6 +18,7 @@
 
 #include <android/gui/CachingHint.h>
 #include <gui/LayerMetadata.h>
+#include <ui/GraphicBuffer.h>
 #include <ui/LayerStack.h>
 #include <ui/PictureProfileHandle.h>
 
@@ -58,10 +59,14 @@ public:
     ftl::Future<FenceResult> createReleaseFenceFuture() override;
     void setReleaseFence(const FenceResult& releaseFence) override;
     LayerFE::ReleaseFencePromiseStatus getReleaseFencePromiseStatus() override;
+    void setReleasedBuffer(sp<GraphicBuffer> buffer) override;
+    void setLastClientTargetAcquireFence(const FenceResult&) override;
+    sp<Fence> getAndClearLastClientTargetAcquireFence() override;
     void onPictureProfileCommitted() override;
-    void setHwcCompositionType(aidl::android::hardware::graphics::composer3::Composition) override;
-    aidl::android::hardware::graphics::composer3::Composition getHwcCompositionType()
-            const override;
+
+    // Used for debugging purposes, e.g. perfetto tracing, dumpsys.
+    void setLastHwcState(const HwcLayerDebugState &state) override;
+    const HwcLayerDebugState &getLastHwcState() const override;
 
     std::unique_ptr<surfaceflinger::frontend::LayerSnapshot> mSnapshot;
 
@@ -80,12 +85,17 @@ private:
             compositionengine::LayerFE::LayerSettings&,
             compositionengine::LayerFE::ClientCompositionTargetSettings&) const;
 
-    bool hasEffect() const { return fillsColor() || drawShadows() || hasBlur(); }
+    bool hasEffect() const {
+        return fillsColor() || drawShadows() || hasBlur() || hasBorderSettings() ||
+                hasBoxShadowSettings();
+    }
     bool hasBufferOrSidebandStream() const;
 
     bool fillsColor() const;
     bool hasBlur() const;
     bool drawShadows() const;
+    bool hasBoxShadowSettings() const;
+    bool hasBorderSettings() const;
 
     const sp<GraphicBuffer> getBuffer() const;
 
@@ -93,8 +103,9 @@ private:
     std::string mName;
     std::promise<FenceResult> mReleaseFence;
     ReleaseFencePromiseStatus mReleaseFencePromiseStatus = ReleaseFencePromiseStatus::UNINITIALIZED;
-    aidl::android::hardware::graphics::composer3::Composition mLastHwcCompositionType =
-            aidl::android::hardware::graphics::composer3::Composition::INVALID;
+    HwcLayerDebugState mLastHwcState;
+    wp<GraphicBuffer> mReleasedBuffer;
+    FenceResult mLastClientCompositionAcquireFence = Fence::NO_FENCE;
 };
 
 } // namespace android

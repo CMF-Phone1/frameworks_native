@@ -18,8 +18,6 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
 
-#undef LOG_TAG
-#define LOG_TAG "HwcComposer"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include "HidlComposerHal.h"
@@ -34,6 +32,7 @@
 #include <hidl/HidlTransportSupport.h>
 #include <hidl/HidlTransportUtils.h>
 #include <log/log.h>
+#include <ui/ScreenPartStatus.h>
 
 #include "HWC2.h"
 #include "Hal.h"
@@ -1091,7 +1090,8 @@ Error HidlComposer::getDataspaceSaturationMatrix(Dataspace dataspace, mat4* outM
 // Composer HAL 2.3
 
 Error HidlComposer::getDisplayIdentificationData(Display display, uint8_t* outPort,
-                                                 std::vector<uint8_t>* outData) {
+                                                 std::vector<uint8_t>* outData,
+                                                 android::ScreenPartStatus*) {
     if (!mClient_2_3) {
         return Error::UNSUPPORTED;
     }
@@ -1230,15 +1230,16 @@ Error HidlComposer::getDisplayCapabilities(Display display,
                                                             translate<DisplayCapability>(tmpCaps);
                                                 });
     } else {
-        mClient_2_3
-                ->getDisplayCapabilities(display, [&](const auto& tmpError, const auto& tmpCaps) {
-                    error = static_cast<V2_4::Error>(tmpError);
-                    if (error != V2_4::Error::NONE) {
-                        return;
-                    }
+        mClient_2_3->getDisplayCapabilities(display,
+                                            [&](const auto& tmpError, const auto& tmpCaps) {
+                                                error = static_cast<V2_4::Error>(tmpError);
+                                                if (error != V2_4::Error::NONE) {
+                                                    return;
+                                                }
 
-                    *outCapabilities = translate<DisplayCapability>(tmpCaps);
-                });
+                                                *outCapabilities =
+                                                        translate<DisplayCapability>(tmpCaps);
+                                            });
     }
 
     return static_cast<Error>(error);
@@ -1460,8 +1461,24 @@ Error HidlComposer::getMaxLayerPictureProfiles(Display, int32_t*) {
     return Error::UNSUPPORTED;
 }
 
+Error HidlComposer::startHdcpNegotiation(Display, const aidl::android::hardware::drm::HdcpLevels&) {
+    return Error::UNSUPPORTED;
+}
+
 Error HidlComposer::getLuts(Display, const std::vector<sp<GraphicBuffer>>&,
                             std::vector<aidl::android::hardware::graphics::composer3::Luts>*) {
+    return Error::UNSUPPORTED;
+}
+
+Error HidlComposer::getReadbackBufferAttributes(Display, V3_0::ReadbackBufferAttributes*) {
+    return Error::UNSUPPORTED;
+}
+
+Error HidlComposer::setReadbackBuffer(Display, const sp<GraphicBuffer>&, int) {
+    return Error::UNSUPPORTED;
+}
+
+Error HidlComposer::getReadbackBufferFence(Display, int*) {
     return Error::UNSUPPORTED;
 }
 

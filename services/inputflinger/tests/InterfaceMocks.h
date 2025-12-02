@@ -46,10 +46,14 @@
 #include <utils/Errors.h>
 #include <utils/Timers.h>
 
+#include "InputReaderTracer.h"
+
 namespace android {
 
 class MockInputReaderContext : public InputReaderContext {
 public:
+    std::string dump() override { return "(dump from MockInputReaderContext)"; }
+
     MOCK_METHOD(void, updateGlobalMetaState, (), (override));
     MOCK_METHOD(int32_t, getGlobalMetaState, (), (override));
 
@@ -88,6 +92,7 @@ private:
 
 class MockEventHubInterface : public EventHubInterface {
 public:
+    MOCK_METHOD(void, setTracer, (std::shared_ptr<InputReaderTracer> tracer));
     MOCK_METHOD(ftl::Flags<InputDeviceClass>, getDeviceClasses, (int32_t deviceId), (const));
     MOCK_METHOD(InputDeviceIdentifier, getDeviceIdentifier, (int32_t deviceId), (const));
     MOCK_METHOD(int32_t, getDeviceControllerNumber, (int32_t deviceId), (const));
@@ -179,6 +184,7 @@ public:
     MOCK_METHOD(bool, isDeviceEnabled, (int32_t deviceId), (const, override));
     MOCK_METHOD(status_t, enableDevice, (int32_t deviceId), (override));
     MOCK_METHOD(status_t, disableDevice, (int32_t deviceId), (override));
+    MOCK_METHOD(std::filesystem::path, getSysfsRootPath, (int32_t deviceId), (const, override));
     MOCK_METHOD(void, sysfsNodeChanged, (const std::string& sysfsNodePath), (override));
     MOCK_METHOD(bool, setKernelWakeEnabled, (int32_t deviceId, bool enabled), (override));
 };
@@ -191,6 +197,9 @@ public:
                 (ui::LogicalDisplayId displayId, const vec2& position), (override));
     MOCK_METHOD(bool, isInputMethodConnectionActive, (), (override));
     MOCK_METHOD(void, notifyMouseCursorFadedOnTyping, (), (override));
+    MOCK_METHOD(std::optional<vec2>, filterPointerMotionForAccessibility,
+                (const vec2& current, const vec2& delta, const ui::LogicalDisplayId& displayId),
+                (override));
 };
 
 class MockInputDevice : public InputDevice {

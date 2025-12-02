@@ -23,8 +23,10 @@
 #include <sys/stat.h>
 #include <vector>
 
+#include <android-base/macros.h>
 #include <graphicsenv/FeatureOverrides.h>
 #include <log/log.h>
+#include <vkjson.h>
 
 #include "feature_config.pb.h"
 
@@ -35,13 +37,53 @@ void resetFeatureOverrides(android::FeatureOverrides &featureOverrides) {
     featureOverrides.mPackageFeatures.clear();
 }
 
+bool
+gpuVendorIdMatches(const VkJsonInstance &vkJsonInstance,
+               const uint32_t &configVendorId) {
+    if (vkJsonInstance.devices.empty()) {
+        return false;
+    }
+
+    // Always match the TEST Vendor ID
+    if (configVendorId == feature_override::GpuVendorID::VENDOR_ID_TEST) {
+        return true;
+    }
+
+    // Always assume one GPU device.
+    uint32_t vendorID = vkJsonInstance.devices.front().properties.vendorID;
+
+    return vendorID == configVendorId;
+}
+
+bool
+conditionsMet(const VkJsonInstance &vkJsonInstance,
+              const android::FeatureConfig &featureConfig) {
+    bool gpuVendorIdMatch = false;
+
+    if (featureConfig.mGpuVendorIDs.empty()) {
+        gpuVendorIdMatch = true;
+    } else {
+        for (const auto &gpuVendorID: featureConfig.mGpuVendorIDs) {
+            if (gpuVendorIdMatches(vkJsonInstance, gpuVendorID)) {
+                gpuVendorIdMatch = true;
+                break;
+            }
+        }
+    }
+
+    return gpuVendorIdMatch;
+}
+
 void initFeatureConfig(android::FeatureConfig &featureConfig,
                        const feature_override::FeatureConfig &featureConfigProto) {
     featureConfig.mFeatureName = featureConfigProto.feature_name();
     featureConfig.mEnabled = featureConfigProto.enabled();
+    for (const auto &gpuVendorIdProto: featureConfigProto.gpu_vendor_ids()) {
+        featureConfig.mGpuVendorIDs.emplace_back(static_cast<uint32_t>(gpuVendorIdProto));
+    }
 }
 
-feature_override::FeatureOverrideProtos readFeatureConfigProtos(std::string configFilePath) {
+feature_override::FeatureOverrideProtos readFeatureConfigProtos(const std::string &configFilePath) {
     feature_override::FeatureOverrideProtos overridesProtos;
 
     std::ifstream protobufBinaryFile(configFilePath.c_str());
@@ -70,40 +112,38 @@ feature_override::FeatureOverrideProtos readFeatureConfigProtos(std::string conf
 
 namespace android {
 
-std::string FeatureOverrideParser::getFeatureOverrideFilePath() const {
-    const std::string kConfigFilePath = "/system/etc/angle/feature_config_vk.binarypb";
-
-    return kConfigFilePath;
+FeatureOverrideParser::FeatureOverrideParser(const std::string &configFilePath) {
+    // Parse the feature override values from the protobuf file in the ctor, before any gpuservice
+    // threads are forked in main() for Binder. Otherwise, a lock would be required to prevent
+    // multiple threads from updating mFeatureOverrides simultaneously.
+    // Note that this prevents reading the file after the device boots if it's ever updated on the
+    // device. That feature may require a lock in the future.
+    parseFeatureOverrides(configFilePath);
 }
 
-bool FeatureOverrideParser::shouldReloadFeatureOverrides() const {
-    std::string configFilePath = getFeatureOverrideFilePath();
-    struct stat fileStat{};
-    if (stat(getFeatureOverrideFilePath().c_str(), &fileStat) != 0) {
-        ALOGE("Error getting file information for '%s': %s", getFeatureOverrideFilePath().c_str(),
-              strerror(errno));
-        // stat'ing the file failed, so return false since reading it will also likely fail.
-        return false;
+void FeatureOverrideParser::parseFeatureOverrides(const std::string &configFilePath) {
+    const feature_override::FeatureOverrideProtos overridesProtos = readFeatureConfigProtos(
+            configFilePath);
+
+    // Clear out the stale values before adding the newly parsed data.
+    resetFeatureOverrides(mFeatureOverrides);
+
+    if (overridesProtos.global_features().empty() &&
+        overridesProtos.package_features().empty()) {
+        // No overrides to parse.
+        return;
     }
 
-    return fileStat.st_mtime > mLastProtobufReadTime;
-}
-
-void FeatureOverrideParser::forceFileRead() {
-    resetFeatureOverrides(mFeatureOverrides);
-    mLastProtobufReadTime = 0;
-}
-
-void FeatureOverrideParser::parseFeatureOverrides() {
-    const feature_override::FeatureOverrideProtos overridesProtos = readFeatureConfigProtos(
-            getFeatureOverrideFilePath());
+    const VkJsonInstance vkJsonInstance = VkJsonGetInstance();
 
     // Global feature overrides.
     for (const auto &featureConfigProto: overridesProtos.global_features()) {
         FeatureConfig featureConfig;
         initFeatureConfig(featureConfig, featureConfigProto);
 
-        mFeatureOverrides.mGlobalFeatures.emplace_back(featureConfig);
+        if (conditionsMet(vkJsonInstance, featureConfig)) {
+            mFeatureOverrides.mGlobalFeatures.emplace_back(featureConfig);
+        }
     }
 
     // App-specific feature overrides.
@@ -120,21 +160,16 @@ void FeatureOverrideParser::parseFeatureOverrides() {
             FeatureConfig featureConfig;
             initFeatureConfig(featureConfig, featureConfigProto);
 
-            featureConfigs.emplace_back(featureConfig);
+            if (conditionsMet(vkJsonInstance, featureConfig)) {
+                featureConfigs.emplace_back(featureConfig);
+            }
         }
 
         mFeatureOverrides.mPackageFeatures[packageName] = featureConfigs;
     }
-
-    mLastProtobufReadTime = std::chrono::system_clock::to_time_t(
-            std::chrono::system_clock::now());
 }
 
-FeatureOverrides FeatureOverrideParser::getFeatureOverrides() {
-    if (shouldReloadFeatureOverrides()) {
-        parseFeatureOverrides();
-    }
-
+const FeatureOverrides &FeatureOverrideParser::getCachedFeatureOverrides() {
     return mFeatureOverrides;
 }
 

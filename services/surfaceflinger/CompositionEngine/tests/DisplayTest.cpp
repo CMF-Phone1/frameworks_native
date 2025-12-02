@@ -278,7 +278,7 @@ TEST_F(DisplayCreationTest, createGpuVirtualDisplay) {
             impl::createDisplay(mCompositionEngine, getDisplayCreationArgsForGpuVirtualDisplay());
     EXPECT_FALSE(display->isSecure());
     EXPECT_TRUE(display->isVirtual());
-    EXPECT_TRUE(GpuVirtualDisplayId::tryCast(display->getId()));
+    EXPECT_TRUE(display->getDisplayIdVariant().and_then(asDisplayIdOfType<GpuVirtualDisplayId>));
 }
 
 /*
@@ -302,8 +302,9 @@ TEST_F(DisplaySetConfigurationTest, configuresPhysicalDisplay) {
     EXPECT_FALSE(mDisplay->isValid());
 
     const auto& filter = mDisplay->getState().layerFilter;
-    EXPECT_EQ(ui::INVALID_LAYER_STACK, filter.layerStack);
+    EXPECT_EQ(ui::UNASSIGNED_LAYER_STACK, filter.layerStack);
     EXPECT_FALSE(filter.toInternalDisplay);
+    EXPECT_FALSE(filter.skipScreenshot);
 }
 
 TEST_F(DisplaySetConfigurationTest, configuresHalVirtualDisplay) {
@@ -318,11 +319,13 @@ TEST_F(DisplaySetConfigurationTest, configuresHalVirtualDisplay) {
     EXPECT_EQ(HAL_VIRTUAL_DISPLAY_ID, mDisplay->getId());
     EXPECT_FALSE(mDisplay->isSecure());
     EXPECT_TRUE(mDisplay->isVirtual());
+    EXPECT_TRUE(mDisplay->getDisplayIdVariant().and_then(asDisplayIdOfType<HalVirtualDisplayId>));
     EXPECT_FALSE(mDisplay->isValid());
 
     const auto& filter = mDisplay->getState().layerFilter;
-    EXPECT_EQ(ui::INVALID_LAYER_STACK, filter.layerStack);
+    EXPECT_EQ(ui::UNASSIGNED_LAYER_STACK, filter.layerStack);
     EXPECT_FALSE(filter.toInternalDisplay);
+    EXPECT_FALSE(filter.skipScreenshot);
 }
 
 TEST_F(DisplaySetConfigurationTest, configuresGpuVirtualDisplay) {
@@ -337,11 +340,13 @@ TEST_F(DisplaySetConfigurationTest, configuresGpuVirtualDisplay) {
     EXPECT_EQ(GPU_VIRTUAL_DISPLAY_ID, mDisplay->getId());
     EXPECT_FALSE(mDisplay->isSecure());
     EXPECT_TRUE(mDisplay->isVirtual());
+    EXPECT_TRUE(mDisplay->getDisplayIdVariant().and_then(asDisplayIdOfType<GpuVirtualDisplayId>));
     EXPECT_FALSE(mDisplay->isValid());
 
     const auto& filter = mDisplay->getState().layerFilter;
-    EXPECT_EQ(ui::INVALID_LAYER_STACK, filter.layerStack);
+    EXPECT_EQ(ui::UNASSIGNED_LAYER_STACK, filter.layerStack);
     EXPECT_FALSE(filter.toInternalDisplay);
+    EXPECT_FALSE(filter.skipScreenshot);
 }
 
 /*
@@ -572,7 +577,7 @@ TEST_F(DisplayChooseCompositionStrategyTest, takesEarlyOutIfGpuDisplay) {
     auto args = getDisplayCreationArgsForGpuVirtualDisplay();
     std::shared_ptr<Display> gpuDisplay =
             createPartialMockDisplay<Display>(mCompositionEngine, args);
-    EXPECT_TRUE(GpuVirtualDisplayId::tryCast(gpuDisplay->getId()));
+    EXPECT_TRUE(gpuDisplay->getDisplayIdVariant().and_then(asDisplayIdOfType<GpuVirtualDisplayId>));
 
     chooseCompositionStrategy(gpuDisplay.get());
 
@@ -687,8 +692,6 @@ using DisplayGetSkipColorTransformTest = DisplayWithLayersTestCommon;
 using aidl::android::hardware::graphics::composer3::DisplayCapability;
 
 TEST_F(DisplayGetSkipColorTransformTest, checksCapabilityIfGpuDisplay) {
-    EXPECT_CALL(mHwComposer, hasCapability(Capability::SKIP_CLIENT_COLOR_TRANSFORM))
-            .WillOnce(Return(true));
     auto args = getDisplayCreationArgsForGpuVirtualDisplay();
     auto gpuDisplay{impl::createDisplay(mCompositionEngine, args)};
     EXPECT_TRUE(gpuDisplay->getSkipColorTransform());

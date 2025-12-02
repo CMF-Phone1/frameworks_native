@@ -29,14 +29,13 @@
 #include <android-base/strings.h>
 #include <android/dlext.h>
 #include <binder/IServiceManager.h>
+#include <bionic/dlext_namespaces.h>
 #include <com_android_graphics_graphicsenv_flags.h>
 #include <graphicsenv/IGpuService.h>
 #include <log/log.h>
-#include <nativeloader/dlext_namespaces.h>
 #include <sys/prctl.h>
 #include <utils/Trace.h>
 
-#include <memory>
 #include <string>
 #include <thread>
 
@@ -91,49 +90,48 @@ static const char* kLlndkLibrariesTxtPath = "/system/etc/llndk.libraries.txt";
 // On modern devices that lack the VNDK APEX, the device no longer
 // contains a helpful list of these libraries on the filesystem as above.
 // See system/sepolicy/vendor/file_contexts
-static const char* kFormerlyVndkspLibrariesList =
-    "android.hardware.common-V2-ndk.so:"
-    "android.hardware.common.fmq-V1-ndk.so:"
-    "android.hardware.graphics.allocator-V2-ndk.so:"
-    "android.hardware.graphics.common-V6-ndk.so:"
-    "android.hardware.graphics.common@1.0.so:"
-    "android.hardware.graphics.common@1.1.so:"
-    "android.hardware.graphics.common@1.2.so:"
-    "android.hardware.graphics.composer3-V1-ndk.so:"
-    "android.hardware.graphics.mapper@2.0.so:"
-    "android.hardware.graphics.mapper@2.1.so:"
-    "android.hardware.graphics.mapper@3.0.so:"
-    "android.hardware.graphics.mapper@4.0.so:"
-    "android.hardware.renderscript@1.0.so:"
-    "android.hidl.memory.token@1.0.so:"
-    "android.hidl.memory@1.0-impl.so:"
-    "android.hidl.memory@1.0.so:"
-    "android.hidl.safe_union@1.0.so:"
-    "libRSCpuRef.so:"
-    "libRSDriver.so:"
-    "libRS_internal.so:"
-    "libbacktrace.so:"
-    "libbase.so:"
-    "libbcinfo.so:"
-    "libblas.so:"
-    "libc++.so:"
-    "libcompiler_rt.so:"
-    "libcutils.so:"
-    "libdmabufheap.so:"
-    "libft2.so:"
-    "libgralloctypes.so:"
-    "libhardware.so:"
-    "libhidlbase.so:"
-    "libhidlmemory.so:"
-    "libion.so:"
-    "libjsoncpp.so:"
-    "liblzma.so:"
-    "libpng.so:"
-    "libprocessgroup.so:"
-    "libunwindstack.so:"
-    "libutils.so:"
-    "libutilscallstack.so:"
-    "libz.so";
+static const char* kFormerlyVndkspLibrariesList = "android.hardware.common-V2-ndk.so:"
+                                                  "android.hardware.common.fmq-V1-ndk.so:"
+                                                  "android.hardware.graphics.allocator-V2-ndk.so:"
+                                                  "android.hardware.graphics.common-V7-ndk.so:"
+                                                  "android.hardware.graphics.common@1.0.so:"
+                                                  "android.hardware.graphics.common@1.1.so:"
+                                                  "android.hardware.graphics.common@1.2.so:"
+                                                  "android.hardware.graphics.composer3-V1-ndk.so:"
+                                                  "android.hardware.graphics.mapper@2.0.so:"
+                                                  "android.hardware.graphics.mapper@2.1.so:"
+                                                  "android.hardware.graphics.mapper@3.0.so:"
+                                                  "android.hardware.graphics.mapper@4.0.so:"
+                                                  "android.hardware.renderscript@1.0.so:"
+                                                  "android.hidl.memory.token@1.0.so:"
+                                                  "android.hidl.memory@1.0-impl.so:"
+                                                  "android.hidl.memory@1.0.so:"
+                                                  "android.hidl.safe_union@1.0.so:"
+                                                  "libRSCpuRef.so:"
+                                                  "libRSDriver.so:"
+                                                  "libRS_internal.so:"
+                                                  "libbacktrace.so:"
+                                                  "libbase.so:"
+                                                  "libbcinfo.so:"
+                                                  "libblas.so:"
+                                                  "libc++.so:"
+                                                  "libcompiler_rt.so:"
+                                                  "libcutils.so:"
+                                                  "libdmabufheap.so:"
+                                                  "libft2.so:"
+                                                  "libgralloctypes.so:"
+                                                  "libhardware.so:"
+                                                  "libhidlbase.so:"
+                                                  "libhidlmemory.so:"
+                                                  "libion.so:"
+                                                  "libjsoncpp.so:"
+                                                  "liblzma.so:"
+                                                  "libpng.so:"
+                                                  "libprocessgroup.so:"
+                                                  "libunwindstack.so:"
+                                                  "libutils.so:"
+                                                  "libutilscallstack.so:"
+                                                  "libz.so";
 
 static std::string vndkVersionStr() {
 #ifdef __BIONIC__
@@ -621,6 +619,10 @@ void GraphicsEnv::setAngleInfo(const std::string& path, const bool shouldUseNati
         mShouldUseAngle = true;
     }
     mShouldUseNativeDriver = shouldUseNativeDriver;
+
+    if (mShouldUseAngle) {
+        updateAngleFeatureOverrides();
+    }
 }
 
 std::string& GraphicsEnv::getPackageName() {
@@ -632,9 +634,25 @@ const std::vector<std::string>& GraphicsEnv::getAngleEglFeatures() {
     return mAngleEglFeatures;
 }
 
+// List of ANGLE features to override (enabled or disable).
+// The list of overrides is loaded and parsed by GpuService.
+void GraphicsEnv::updateAngleFeatureOverrides() {
+    if (!graphicsenv_flags::angle_feature_overrides()) {
+        return;
+    }
+
+    const sp<IGpuService> gpuService = getGpuService();
+    if (!gpuService) {
+        ALOGE("No GPU service");
+        return;
+    }
+
+    gpuService->getFeatureOverrides(mFeatureOverrides);
+}
+
 void GraphicsEnv::getAngleFeatureOverrides(std::vector<const char*>& enabled,
                                            std::vector<const char*>& disabled) {
-    if (!graphicsenv_flags::feature_overrides()) {
+    if (!graphicsenv_flags::angle_feature_overrides()) {
         return;
     }
 
@@ -724,6 +742,18 @@ void GraphicsEnv::nativeToggleAngleAsSystemDriver(bool enabled) {
         return;
     }
     gpuService->toggleAngleAsSystemDriver(enabled);
+}
+
+std::string GraphicsEnv::nativeGetPersistGraphicsEgl() {
+    if (!graphicsenv_flags::query_persist_graphics_egl()) {
+        return "";
+    }
+    const sp<IGpuService> gpuService = getGpuService();
+    if (!gpuService) {
+        ALOGE("No GPU service");
+        return "";
+    }
+    return gpuService->getPersistGraphicsEgl();
 }
 
 bool GraphicsEnv::shouldUseSystemAngle() {

@@ -19,7 +19,6 @@
 #include <algorithm>
 #include <chrono>
 #include <iterator>
-#include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -34,12 +33,12 @@
 #include <input/PrintTools.h>
 #include <linux/input-event-codes.h>
 #include <log/log_main.h>
-#include <stats_pull_atom_callback.h>
-#include <statslog.h>
+#include <statslog_inputflinger.h>
 #include "InputReaderBase.h"
 #include "TouchCursorInputMapperCommon.h"
 #include "TouchpadInputMapper.h"
 #include "gestures/HardwareProperties.h"
+#include "gestures/Logging.h"
 #include "gestures/TimerProvider.h"
 #include "ui/Rotation.h"
 
@@ -48,15 +47,6 @@ namespace input_flags = com::android::input::flags;
 namespace android {
 
 namespace {
-
-/**
- * Log details of each gesture output by the gestures library.
- * Enable this via "adb shell setprop log.tag.TouchpadInputMapperGestures DEBUG" (requires
- * restarting the shell)
- */
-const bool DEBUG_TOUCHPAD_GESTURES =
-        __android_log_is_loggable(ANDROID_LOG_DEBUG, "TouchpadInputMapperGestures",
-                                  ANDROID_LOG_INFO);
 
 std::vector<double> createAccelerationCurveForSensitivity(int32_t sensitivity,
                                                           bool accelerationEnabled,
@@ -115,7 +105,7 @@ int32_t linuxBusToInputDeviceBusEnum(int32_t linuxBus, bool isUsiStylus) {
     if (isUsiStylus) {
         // This is a stylus connected over the Universal Stylus Initiative (USI) protocol.
         // For metrics purposes, we treat this protocol as a separate bus.
-        return util::INPUT_DEVICE_USAGE_REPORTED__DEVICE_BUS__USI;
+        return inputflinger::stats::INPUT_DEVICE_USAGE_REPORTED__DEVICE_BUS__USI;
     }
 
     // When adding cases to this switch, also add them to the copy of this method in
@@ -123,11 +113,13 @@ int32_t linuxBusToInputDeviceBusEnum(int32_t linuxBus, bool isUsiStylus) {
     // TODO(b/286394420): deduplicate this method with the one in InputDeviceMetricsCollector.cpp.
     switch (linuxBus) {
         case BUS_USB:
-            return util::INPUT_DEVICE_USAGE_REPORTED__DEVICE_BUS__USB;
+            return inputflinger::stats::INPUT_DEVICE_USAGE_REPORTED__DEVICE_BUS__USB;
         case BUS_BLUETOOTH:
-            return util::INPUT_DEVICE_USAGE_REPORTED__DEVICE_BUS__BLUETOOTH;
+            return inputflinger::stats::INPUT_DEVICE_USAGE_REPORTED__DEVICE_BUS__BLUETOOTH;
+        case BUS_VIRTUAL:
+            return inputflinger::stats::INPUT_DEVICE_USAGE_REPORTED__DEVICE_BUS__VIRTUAL;
         default:
-            return util::INPUT_DEVICE_USAGE_REPORTED__DEVICE_BUS__OTHER;
+            return inputflinger::stats::INPUT_DEVICE_USAGE_REPORTED__DEVICE_BUS__OTHER;
     }
 }
 
@@ -152,42 +144,56 @@ public:
     // records it if so.
     void processGesture(const TouchpadInputMapper::MetricsIdentifier& id, const Gesture& gesture) {
         std::scoped_lock lock(mLock);
+        Counters& counters = mCounters[id];
         switch (gesture.type) {
             case kGestureTypeFling:
                 if (gesture.details.fling.fling_state == GESTURES_FLING_START) {
                     // Indicates the end of a two-finger scroll gesture.
-                    mCounters[id].twoFingerSwipeGestures++;
+                    counters.twoFingerSwipeGestures++;
                 }
                 break;
             case kGestureTypeSwipeLift:
-                mCounters[id].threeFingerSwipeGestures++;
+                // The Gestures library occasionally outputs two lift gestures in a row, which can
+                // cause inaccurate metrics reporting. To work around this, deduplicate successive
+                // lift gestures.
+                // TODO(b/404529050): fix the Gestures library, and remove this check.
+                if (counters.lastGestureType != kGestureTypeSwipeLift) {
+                    counters.threeFingerSwipeGestures++;
+                }
                 break;
             case kGestureTypeFourFingerSwipeLift:
-                mCounters[id].fourFingerSwipeGestures++;
+                // TODO(b/404529050): fix the Gestures library, and remove this check.
+                if (counters.lastGestureType != kGestureTypeFourFingerSwipeLift) {
+                    counters.fourFingerSwipeGestures++;
+                }
                 break;
             case kGestureTypePinch:
                 if (gesture.details.pinch.zoom_state == GESTURES_ZOOM_END) {
-                    mCounters[id].pinchGestures++;
+                    counters.pinchGestures++;
                 }
                 break;
             default:
                 // We're not interested in any other gestures.
                 break;
         }
+        counters.lastGestureType = gesture.type;
     }
 
 private:
     MetricsAccumulator() {
-        AStatsManager_setPullAtomCallback(android::util::TOUCHPAD_USAGE, /*metadata=*/nullptr,
+        AStatsManager_setPullAtomCallback(android::inputflinger::stats::TOUCHPAD_USAGE,
+                                          /*metadata=*/nullptr,
                                           MetricsAccumulator::pullAtomCallback, /*cookie=*/nullptr);
     }
 
-    ~MetricsAccumulator() { AStatsManager_clearPullAtomCallback(android::util::TOUCHPAD_USAGE); }
+    ~MetricsAccumulator() {
+        AStatsManager_clearPullAtomCallback(android::inputflinger::stats::TOUCHPAD_USAGE);
+    }
 
     static AStatsManager_PullAtomCallbackReturn pullAtomCallback(int32_t atomTag,
                                                                  AStatsEventList* outEventList,
                                                                  void* cookie) {
-        LOG_ALWAYS_FATAL_IF(atomTag != android::util::TOUCHPAD_USAGE);
+        LOG_ALWAYS_FATAL_IF(atomTag != android::inputflinger::stats::TOUCHPAD_USAGE);
         MetricsAccumulator& accumulator = MetricsAccumulator::getInstance();
         accumulator.produceAtomsAndReset(*outEventList);
         return AStatsManager_PULL_SUCCESS;
@@ -202,9 +208,10 @@ private:
     void produceAtomsLocked(AStatsEventList& outEventList) const REQUIRES(mLock) {
         for (auto& [id, counters] : mCounters) {
             auto [busId, vendorId, productId, versionId] = id;
-            addAStatsEvent(&outEventList, android::util::TOUCHPAD_USAGE, vendorId, productId,
-                           versionId, linuxBusToInputDeviceBusEnum(busId, /*isUsi=*/false),
-                           counters.fingers, counters.palms, counters.twoFingerSwipeGestures,
+            addAStatsEvent(&outEventList, android::inputflinger::stats::TOUCHPAD_USAGE, vendorId,
+                           productId, versionId,
+                           linuxBusToInputDeviceBusEnum(busId, /*isUsi=*/false), counters.fingers,
+                           counters.palms, counters.twoFingerSwipeGestures,
                            counters.threeFingerSwipeGestures, counters.fourFingerSwipeGestures,
                            counters.pinchGestures);
         }
@@ -222,6 +229,10 @@ private:
         int32_t threeFingerSwipeGestures = 0;
         int32_t fourFingerSwipeGestures = 0;
         int32_t pinchGestures = 0;
+
+        // Records the last type of gesture received for this device, for deduplication purposes.
+        // TODO(b/404529050): fix the Gestures library and remove this field.
+        GestureType lastGestureType = kGestureTypeContactInitiated;
     };
 
     // Metrics are aggregated by device model and version, so if two devices of the same model and
@@ -242,6 +253,7 @@ TouchpadInputMapper::TouchpadInputMapper(InputDeviceContext& deviceContext,
         mStateConverter(deviceContext, mMotionAccumulator),
         mGestureConverter(*getContext(), deviceContext, getDeviceId()),
         mCapturedEventConverter(*getContext(), deviceContext, mMotionAccumulator, getDeviceId()),
+        mRelativeModeGestureConverter(*getContext(), getDeviceId()),
         mMetricsId(metricsIdFromInputDeviceIdentifier(deviceContext.getDeviceIdentifier())) {
     if (std::optional<RawAbsoluteAxisInfo> slotAxis =
                 deviceContext.getAbsoluteAxisInfo(ABS_MT_SLOT);
@@ -285,10 +297,16 @@ uint32_t TouchpadInputMapper::getSources() const {
 
 void TouchpadInputMapper::populateDeviceInfo(InputDeviceInfo& info) {
     InputMapper::populateDeviceInfo(info);
-    if (mPointerCaptured) {
-        mCapturedEventConverter.populateMotionRanges(info);
-    } else {
-        mGestureConverter.populateMotionRanges(info);
+    switch (mCaptureMode) {
+        case PointerCaptureMode::UNCAPTURED:
+            mGestureConverter.populateMotionRanges(info);
+            break;
+        case PointerCaptureMode::ABSOLUTE:
+            mCapturedEventConverter.populateMotionRanges(info);
+            break;
+        case PointerCaptureMode::RELATIVE:
+            // TODO(b/403531245): populate motion ranges from the relative mode gesture converter.
+            break;
     }
 }
 
@@ -297,7 +315,7 @@ void TouchpadInputMapper::dump(std::string& dump) {
     if (mResettingInterpreter) {
         dump += INDENT3 "Currently resetting gesture interpreter\n";
     }
-    dump += StringPrintf(INDENT3 "Pointer captured: %s\n", toString(mPointerCaptured));
+    dump += INDENT3 "Pointer capture mode: " + ftl::enum_string(mCaptureMode) + "\n";
     dump += INDENT3 "Gesture converter:\n";
     dump += addLinePrefix(mGestureConverter.dump(), INDENT4);
     dump += INDENT3 "Gesture properties:\n";
@@ -387,17 +405,26 @@ std::list<NotifyArgs> TouchpadInputMapper::reconfigure(nsecs_t when,
     }
     if ((!changes.any() && config.pointerCaptureRequest.isEnable()) ||
         changes.test(InputReaderConfiguration::Change::POINTER_CAPTURE)) {
-        mPointerCaptured = config.pointerCaptureRequest.isEnable();
+        LOG(INFO) << "Changing pointer capture mode from " << ftl::enum_string(mCaptureMode)
+                  << " to " << ftl::enum_string(config.pointerCaptureRequest.mode);
+        resetGestureInterpreter(when);
+        switch (config.pointerCaptureRequest.mode) {
+            case PointerCaptureMode::UNCAPTURED:
+                out += mGestureConverter.reset(when);
+                break;
+            case PointerCaptureMode::ABSOLUTE:
+                mCapturedEventConverter.reset();
+                // We've just had a period during which events weren't being sent to the
+                // HardwareStateConverter, so we need to reset it.
+                mStateConverter.reset();
+                break;
+            case PointerCaptureMode::RELATIVE:
+                // mRelativeModeGestureConverter is stateless, and so doesn't need resetting.
+                break;
+        }
+        mCaptureMode = config.pointerCaptureRequest.mode;
         // The motion ranges are going to change, so bump the generation to clear the cached ones.
         bumpGeneration();
-        if (mPointerCaptured) {
-            // The touchpad is being captured, so we need to tidy up any fake fingers etc. that are
-            // still being reported for a gesture in progress.
-            out += reset(when);
-        } else {
-            // We're transitioning from captured to uncaptured.
-            mCapturedEventConverter.reset();
-        }
         if (changes.any()) {
             out.push_back(NotifyDeviceResetArgs(getContext()->getNextId(), when, getDeviceId()));
         }
@@ -408,7 +435,18 @@ std::list<NotifyArgs> TouchpadInputMapper::reconfigure(nsecs_t when,
 std::list<NotifyArgs> TouchpadInputMapper::reset(nsecs_t when) {
     mStateConverter.reset();
     resetGestureInterpreter(when);
-    std::list<NotifyArgs> out = mGestureConverter.reset(when);
+    std::list<NotifyArgs> out;
+    switch (mCaptureMode) {
+        case PointerCaptureMode::UNCAPTURED:
+            out += mGestureConverter.reset(when);
+            break;
+        case PointerCaptureMode::ABSOLUTE:
+            mCapturedEventConverter.reset();
+            break;
+        case PointerCaptureMode::RELATIVE:
+            // mRelativeModeGestureConverter is stateless, and so doesn't need resetting.
+            break;
+    }
     out += InputMapper::reset(when);
     return out;
 }
@@ -424,7 +462,7 @@ void TouchpadInputMapper::resetGestureInterpreter(nsecs_t when) {
 }
 
 std::list<NotifyArgs> TouchpadInputMapper::process(const RawEvent& rawEvent) {
-    if (mPointerCaptured) {
+    if (mCaptureMode == PointerCaptureMode::ABSOLUTE) {
         return mCapturedEventConverter.process(rawEvent);
     }
     if (mMotionAccumulator.getActiveSlotsCount() == 0) {
@@ -470,7 +508,7 @@ void TouchpadInputMapper::updatePalmDetectionMetrics() {
 
 std::list<NotifyArgs> TouchpadInputMapper::sendHardwareState(nsecs_t when, nsecs_t readTime,
                                                              SelfContainedHardwareState schs) {
-    ALOGD_IF(DEBUG_TOUCHPAD_GESTURES, "New hardware state: %s", schs.state.String().c_str());
+    ALOGD_IF(debugTouchpadGestures(), "New hardware state: %s", schs.state.String().c_str());
     mGestureInterpreter->PushHardwareState(&schs.state);
     return processGestures(when, readTime);
 }
@@ -481,7 +519,7 @@ std::list<NotifyArgs> TouchpadInputMapper::timeoutExpired(nsecs_t when) {
 }
 
 void TouchpadInputMapper::consumeGesture(const Gesture* gesture) {
-    ALOGD_IF(DEBUG_TOUCHPAD_GESTURES, "Gesture ready: %s", gesture->String().c_str());
+    ALOGD_IF(debugTouchpadGestures(), "Gesture ready: %s", gesture->String().c_str());
     if (mResettingInterpreter) {
         // We already handle tidying up fake fingers etc. in GestureConverter::reset, so we should
         // ignore any gestures produced from the interpreter while we're resetting it.
@@ -498,7 +536,12 @@ std::list<NotifyArgs> TouchpadInputMapper::processGestures(nsecs_t when, nsecs_t
     if (mDisplayId) {
         MetricsAccumulator& metricsAccumulator = MetricsAccumulator::getInstance();
         for (Gesture& gesture : mGesturesToProcess) {
-            out += mGestureConverter.handleGesture(when, readTime, mGestureStartTime, gesture);
+            if (mCaptureMode == PointerCaptureMode::UNCAPTURED) {
+                out += mGestureConverter.handleGesture(when, readTime, mGestureStartTime, gesture);
+            } else {
+                out += mRelativeModeGestureConverter.handleGesture(when, readTime,
+                                                                   mGestureStartTime, gesture);
+            }
             metricsAccumulator.processGesture(mMetricsId, gesture);
         }
     }

@@ -215,14 +215,14 @@ status_t BufferItem::unflatten(
     FlattenableUtils::read(buffer, size, flags);
 
     if (flags & 1) {
-        mGraphicBuffer = new GraphicBuffer();
+        mGraphicBuffer = sp<GraphicBuffer>::make();
         status_t err = mGraphicBuffer->unflatten(buffer, size, fds, count);
         if (err) return err;
         size -= FlattenableUtils::align<4>(buffer);
     }
 
     if (flags & 2) {
-        mFence = new Fence();
+        mFence = sp<Fence>::make();
         status_t err = mFence->unflatten(buffer, size, fds, count);
         if (err) return err;
         size -= FlattenableUtils::align<4>(buffer);
@@ -245,7 +245,6 @@ status_t BufferItem::unflatten(
 
     uint32_t timestampLo = 0, timestampHi = 0;
     uint32_t frameNumberLo = 0, frameNumberHi = 0;
-    int32_t pictureProfileIdLo = 0, pictureProfileIdHi = 0;
 
     readAligned(buffer, size, mCrop);
     readAligned(buffer, size, mTransform);
@@ -257,6 +256,7 @@ status_t BufferItem::unflatten(
     readAligned(buffer, size, mDataSpace);
 #if COM_ANDROID_GRAPHICS_LIBUI_FLAGS_APPLY_PICTURE_PROFILES
     bool hasPictureProfileHandle;
+    int32_t pictureProfileIdLo = 0, pictureProfileIdHi = 0;
     readAligned(buffer, size, hasPictureProfileHandle);
     readAligned(buffer, size, pictureProfileIdLo);
     readAligned(buffer, size, pictureProfileIdHi);

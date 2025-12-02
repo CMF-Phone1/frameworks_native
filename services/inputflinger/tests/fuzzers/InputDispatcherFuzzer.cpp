@@ -48,9 +48,9 @@ public:
         auto [it, _] = mVerifiers.emplace(args.displayId, "Fuzz Verifier");
         InputVerifier& verifier = it->second;
         const Result<void> result =
-                verifier.processMovement(args.deviceId, args.source, args.action,
+                verifier.processMovement(args.deviceId, args.source, args.action, args.actionButton,
                                          args.getPointerCount(), args.pointerProperties.data(),
-                                         args.pointerCoords.data(), args.flags);
+                                         args.pointerCoords.data(), args.flags, args.buttonState);
         if (result.ok()) {
             return args;
         }
@@ -143,7 +143,7 @@ extern "C" int LLVMFuzzerTestOneInput(uint8_t* data, size_t size) {
     NotifyStreamProvider streamProvider(fdp);
 
     FakeInputDispatcherPolicy fakePolicy;
-    auto dispatcher = std::make_unique<InputDispatcher>(fakePolicy);
+    auto dispatcher = std::make_unique<InputDispatcher>(fakePolicy, /*env=*/nullptr);
     dispatcher->setInputDispatchMode(/*enabled=*/true, /*frozen=*/false);
     // Start InputDispatcher thread
     dispatcher->start();
